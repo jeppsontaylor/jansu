@@ -1960,13 +1960,18 @@ impl Storage for DynoStore {
                     self.cluster, group_id,
                 ));
 
-                let had_group_state = self
-                    .object_store
-                    .delete(&location)
-                    .await
-                    .inspect(|outcome| debug!(group_id, ?outcome))
-                    .inspect_err(|err| error!(group_id, ?err))
-                    .is_ok();
+                let had_group_state = match self.object_store.head(&location).await {
+                    Ok(_) => {
+                        _ = self
+                            .object_store
+                            .delete(&location)
+                            .await
+                            .inspect(|outcome| debug!(group_id, ?outcome))
+                            .inspect_err(|err| error!(group_id, ?err));
+                        true
+                    }
+                    Err(_) => false,
+                };
 
                 debug!(group_id, had_group_state);
 

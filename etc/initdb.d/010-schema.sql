@@ -89,6 +89,15 @@ create table if not exists watermark (
     created_at timestamp default current_timestamp not null
 );
 
+create table if not exists leader_epoch_history (
+    topition int references topition (id) on delete cascade,
+    epoch int not null,
+    start_offset bigint not null,
+    last_updated timestamp default current_timestamp not null,
+    created_at timestamp default current_timestamp not null,
+    primary key (topition, epoch)
+);
+
 create table if not exists topic_configuration (
     id int generated always as identity primary key,
     topic int references topic (id) on delete cascade,
@@ -224,6 +233,7 @@ create table if not exists consumer_offset (
     leader_epoch int,
     timestamp timestamp,
     metadata text,
+    expires_at timestamp,
     last_updated timestamp default current_timestamp not null,
     created_at timestamp default current_timestamp not null
 );

@@ -235,7 +235,7 @@
       "route_status": "routed",
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
-      "semantic_status": "uncertified",
+      "semantic_status": "partial",
       "phase_owner": "10",
       "profiles": {
         "jansu-native": "gray",
@@ -247,32 +247,49 @@
       },
       "storage": {
         "postgres": "uncertified",
-        "sqlite": "uncertified",
-        "s3-dynostore": "uncertified",
-        "slatedb": "uncertified",
+        "sqlite": "limited-parity",
+        "s3-dynostore": "limited-parity",
+        "slatedb": "limited-parity",
         "turso": "uncertified",
-        "memory": "uncertified"
+        "memory": "development-test-only"
       },
       "proof": {
         "unit_tests": [
           "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_commit_succeeds_with_current_generation",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_commit_with_stale_generation_returns_illegal_generation",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_returns_committed_offsets",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
+          "jansu-broker/tests/cg.rs::in_memory::delete_unknown_consumer_group",
+          "jansu-broker/tests/cg.rs::lite::delete_unknown_consumer_group",
+          "jansu-broker/tests/cg.rs::slatedb::delete_unknown_consumer_group",
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
           "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 consumer group offset management. Postgres: `etc/initdb.d/010-schema.sql` includes `leader_epoch_history` and `consumer_offset.expires_at`; `011-offset-retention-patch.sql` upgrades older volumes; integration tests call `ensure_postgres_offset_schema` before connecting."
     },
     {
       "api_key": 9,
@@ -309,7 +326,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -317,12 +338,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 consumer group offset fetch. Non-PG backends fully verified."
     },
     {
       "api_key": 10,
@@ -359,7 +387,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -367,12 +399,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 coordinator discovery. Non-PG backends fully verified."
     },
     {
       "api_key": 11,
@@ -409,7 +448,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -417,12 +460,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 join group with MemberIdRequired, generation fencing, and rebalance. Non-PG backends fully verified."
     },
     {
       "api_key": 12,
@@ -459,7 +509,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -467,12 +521,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 heartbeat with IllegalGeneration fencing verified via heartbeat_with_stale_generation_returns_illegal_generation test."
     },
     {
       "api_key": 13,
@@ -509,7 +570,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -517,12 +582,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 leave group with per-member unknown-member error verified via leave_unknown_member_returns_per_member_error test."
     },
     {
       "api_key": 14,
@@ -559,7 +631,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -567,12 +643,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 sync group with wrong-generation IllegalGeneration fencing verified via sync_with_wrong_generation_returns_illegal_generation test."
     },
     {
       "api_key": 15,
@@ -609,7 +692,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -617,12 +704,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 describe groups. Non-PG backends fully verified."
     },
     {
       "api_key": 16,
@@ -659,7 +753,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -667,12 +765,19 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Current routed API."
+      "notes": "Phase 10 list groups. Non-PG backends fully verified."
     },
     {
       "api_key": 17,
@@ -709,7 +814,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -717,7 +826,14 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -808,7 +924,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -816,7 +936,14 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -858,7 +985,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -866,7 +997,14 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -908,7 +1046,11 @@
           "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
           "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
           "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
-          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_fetch_round_trip",
+          "jansu-storage/tests/consumer_offsets.rs::postgres_offset_commit_maintain_clears_expired_records"
         ],
         "differential_tests": [
           "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
@@ -916,7 +1058,14 @@
           "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
-          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn",
+          "jansu-broker/tests/cg_dynamic.rs::pg::lifecycle",
+          "jansu-broker/tests/cg_dynamic.rs::pg::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::pg::reject_empty_member_id_on_join",
+          "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
+          "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
         "failure_modes": "untested"

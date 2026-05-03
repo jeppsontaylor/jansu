@@ -2162,6 +2162,31 @@ impl Storage for Engine {
         let mut responses = vec![];
 
         for (topition, offset_type) in offsets {
+            if self
+                .prepare_query_opt(
+                    &c,
+                    sql_lookup("topition_select.sql")?.as_str(),
+                    (
+                        self.cluster.as_str(),
+                        topition.topic(),
+                        topition.partition(),
+                    ),
+                )
+                .await
+                .inspect_err(|err| error!(?err, cluster = self.cluster, ?topition))?
+                .is_none()
+            {
+                responses.push((
+                    topition.clone(),
+                    ListOffsetResponse {
+                        error_code: ErrorCode::UnknownTopicOrPartition,
+                        timestamp: None,
+                        offset: None,
+                    },
+                ));
+                continue;
+            }
+
             let query = match (offset_type, isolation_level) {
                 (ListOffsetRequest::Earliest, _) => sql_lookup("list_earliest_offset.sql")?,
                 (ListOffsetRequest::Latest, IsolationLevel::ReadCommitted) => {
@@ -3436,11 +3461,11 @@ impl Storage for Engine {
                         &tx,
                         &sql_lookup("txn_detail_insert.sql")?,
                         (
+                            transaction_timeout_ms,
                             self.cluster.as_str(),
                             transaction_id,
                             producer,
                             epoch,
-                            transaction_timeout_ms
                         ),
                     )
                     .await

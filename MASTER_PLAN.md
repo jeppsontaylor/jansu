@@ -19,17 +19,18 @@ Done means:
 ## Priority Queue
 
 1. `cross-phase` agent context enforcement: keep `AGENTS.md`, `MASTER_PLAN.md`, `AUDIT.md`, tool pointers, phase logs, and compatibility-contract tests aligned.
-2. Phase 10: `tips/phases/10-consumer-groups-offsets.md`.
-3. Phase 08: `tips/phases/08-fetch-list-offsets-leader-epoch.md`.
-4. Phase 09: `tips/phases/09-topic-config-admin.md`.
-5. Phase 11: `tips/phases/11-idempotent-producer.md`.
-6. Phase 12: `tips/phases/12-transactions-eos.md`.
-7. Phase 13: `tips/phases/13-retention-compaction-delete-records.md`.
-8. Phase 14: `tips/phases/14-security-acls-quotas.md`.
-9. Phase 15: `tips/phases/15-cluster-metadata-modern-kafka.md`.
-10. Phase 16: `tips/phases/16-ecosystem-performance-ops-migration.md`.
+2. Phase 08: `tips/phases/08-fetch-list-offsets-leader-epoch.md`.
+3. Phase 09: `tips/phases/09-topic-config-admin.md`.
+4. Phase 11: `tips/phases/11-idempotent-producer.md`.
+5. Phase 12: `tips/phases/12-transactions-eos.md`.
+6. Phase 13: `tips/phases/13-retention-compaction-delete-records.md`.
+7. Phase 14: `tips/phases/14-security-acls-quotas.md`.
+8. Phase 15: `tips/phases/15-cluster-metadata-modern-kafka.md`.
+9. Phase 16: `tips/phases/16-ecosystem-performance-ops-migration.md`.
 
 Completed or historical phases remain authoritative inputs and may be reopened only for audit-backed fixes.
+
+- **Phase 10** (`tips/phases/10-consumer-groups-offsets.md`): milestone closed 2026-05-03; hardened 2026-05-03 (DynoStore delete_groups fix, failure-mode tests); canonical log `phase-logs/10-consumer-groups-offsets.md.log`, manifest status `legacy-complete`. Postgres DDL: `leader_epoch_history`, `consumer_offset.expires_at`, `011-offset-retention-patch.sql`, libSQL `maintain` statement-key fix, `PgStorage::create_topic` leader-epoch insert via `tx_prepare_execute` with `i64` start offset.
 
 ## Phase Order
 

@@ -571,12 +571,13 @@ impl Postgres {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<u64, Error> {
+        let stmt_key = sql;
         let sql = self.sql_lookup(sql)?;
 
         let prepared = tx
             .prepare_cached(sql)
             .await
-            .inspect_err(|err| error!(?err))?;
+            .inspect_err(|err| error!(stmt_key, ?err))?;
 
         let execute_start = SystemTime::now();
 
@@ -1420,7 +1421,7 @@ impl Storage for Postgres {
     async fn register_broker(&self, broker_registration: BrokerRegistrationRequest) -> Result<()> {
         debug!(cluster = self.cluster, ?broker_registration);
 
-        let mut c = self.connection().await?;
+        let c = self.connection().await?;
 
         _ = self
             .prepare_execute(
@@ -1513,16 +1514,11 @@ impl Storage for Postgres {
                 )
                 .await?;
 
-            let cluster = Box::new(self.cluster.clone()) as Box<dyn ToSql + Sync + Send>;
-            let name = Box::new(topic.name.clone()) as Box<dyn ToSql + Sync + Send>;
-            let partition_value = Box::new(partition) as Box<dyn ToSql + Sync + Send>;
-            let epoch = Box::new(0) as Box<dyn ToSql + Sync + Send>;
-            let start_offset = Box::new(0) as Box<dyn ToSql + Sync + Send>;
             _ = self
-                .tx_prepare_query_raw(
+                .tx_prepare_execute(
                     &tx,
                     "leader_epoch_history_insert.sql",
-                    [cluster, name, partition_value, epoch, start_offset],
+                    &[&self.cluster, &topic.name, &partition, &0_i32, &0_i64],
                 )
                 .await?;
         }
@@ -1559,7 +1555,7 @@ impl Storage for Postgres {
     ) -> Result<Vec<DeleteRecordsTopicResult>> {
         debug!(cluster = self.cluster, ?topics);
 
-        let mut c = self.connection().await?;
+        let c = self.connection().await?;
 
         let delete_records = c
             .prepare(concat!(
@@ -2465,6 +2461,27 @@ impl Storage for Postgres {
         let mut responses = vec![];
 
         for (topition, offset_type) in offsets {
+            if self
+                .prepare_query_opt(
+                    &c,
+                    "topition_select.sql",
+                    &[&self.cluster, &topition.topic(), &topition.partition()],
+                )
+                .await
+                .inspect_err(|err| error!(?err, cluster = self.cluster, ?topition))?
+                .is_none()
+            {
+                responses.push((
+                    topition.clone(),
+                    ListOffsetResponse {
+                        error_code: ErrorCode::UnknownTopicOrPartition,
+                        timestamp: None,
+                        offset: None,
+                    },
+                ));
+                continue;
+            }
+
             let query = match (offset_type, isolation_level) {
                 (ListOffset::Earliest, _) => "list_earliest_offset.sql",
                 (ListOffset::Latest, IsolationLevel::ReadCommitted) => {
@@ -3490,11 +3507,11 @@ impl Storage for Postgres {
                         &tx,
                         "txn_detail_insert.sql",
                         &[
+                            &transaction_timeout_ms,
                             &self.cluster,
                             &transaction_id,
                             &producer,
                             &epoch,
-                            &transaction_timeout_ms
                         ],
                     )
                     .await
@@ -3832,8 +3849,12 @@ impl Storage for Postgres {
         debug!(deleted);
 
         let c = self.connection().await?;
-        let expired = c
-            .execute("consumer_offset_delete_expired.sql", &[&self.cluster, &now])
+        let expired = self
+            .prepare_execute(
+                &c,
+                "consumer_offset_delete_expired.sql",
+                &[&self.cluster, &now],
+            )
             .await?;
         debug!(expired);
 

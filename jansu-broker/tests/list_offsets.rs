@@ -800,10 +800,12 @@ where
                                 ListOffsetsPartition::default()
                                     .partition_index(valid_partition)
                                     .timestamp(ListOffset::Latest.try_into()?)
+                                    .current_leader_epoch(Some(-1))
                                     .max_num_offsets(Some(1)),
                                 ListOffsetsPartition::default()
                                     .partition_index(invalid_partition)
                                     .timestamp(ListOffset::Latest.try_into()?)
+                                    .current_leader_epoch(Some(-1))
                                     .max_num_offsets(Some(1)),
                             ]
                             .into(),
@@ -835,7 +837,7 @@ where
         i16::from(ErrorCode::UnknownTopicOrPartition),
         invalid.error_code
     );
-    assert_eq!(None, invalid.offset);
+    assert_eq!(Some(-1), invalid.offset);
     assert_eq!(Some(-1), invalid.leader_epoch);
 
     Ok(())

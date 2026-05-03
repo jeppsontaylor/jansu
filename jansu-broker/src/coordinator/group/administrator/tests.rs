@@ -2650,3 +2650,336 @@ async fn forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync
 
     Ok(())
 }
+
+#[tokio::test]
+async fn leave_unknown_member_returns_per_member_error() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    let cluster = "leave-unknown";
+    let node = 12321;
+
+    const CLIENT_ID: &str = "console-consumer";
+    const GROUP_ID: &str = "leave-unknown-group";
+    const RANGE: &str = "range";
+    const COOPERATIVE_STICKY: &str = "cooperative-sticky";
+    const PROTOCOL_TYPE: &str = "consumer";
+
+    let storage = StorageContainer::builder()
+        .cluster_id(cluster)
+        .node_id(node)
+        .advertised_listener(Url::parse("tcp://127.0.0.1:9092/")?)
+        .schema_registry(None)
+        .storage(storage_url()?)
+        .build()
+        .await?;
+
+    let mut s = Controller::with_storage(storage)?;
+
+    let protocols = [
+        JoinGroupRequestProtocol::default()
+            .name(RANGE.into())
+            .metadata(Bytes::from_static(b"meta")),
+        JoinGroupRequestProtocol::default()
+            .name(COOPERATIVE_STICKY.into())
+            .metadata(Bytes::from_static(b"meta")),
+    ];
+
+    // Join to establish the group
+    let member_id = match s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            "",
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?
+    {
+        Body::JoinGroupResponse(r) => {
+            assert_eq!(i16::from(ErrorCode::MemberIdRequired), r.error_code);
+            r.member_id
+        }
+        otherwise => panic!("{otherwise:?}"),
+    };
+
+    // Complete the join
+    let _ = s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            &member_id,
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?;
+
+    // Sync to move to Formed state
+    let assignments = [SyncGroupRequestAssignment::default()
+        .member_id(member_id.clone())
+        .assignment(Bytes::from_static(b"assignment"))];
+
+    let _ = s
+        .sync(
+            GROUP_ID,
+            0,
+            &member_id,
+            None,
+            Some(PROTOCOL_TYPE),
+            Some(RANGE),
+            Some(&assignments[..]),
+        )
+        .await?;
+
+    // Leave with an unknown member - should get per-member error
+    let leave_response = s
+        .leave(
+            GROUP_ID,
+            None,
+            Some(&[MemberIdentity::default()
+                .member_id("completely-unknown-member".into())
+                .group_instance_id(None)
+                .reason(Some("testing unknown member leave".into()))]),
+        )
+        .await?;
+
+    match leave_response {
+        Body::LeaveGroupResponse(r) => {
+            assert_eq!(i16::from(ErrorCode::None), r.error_code);
+            let members = r.members.expect("members should be present");
+            assert_eq!(1, members.len());
+            // Unknown member should get an error
+            assert_ne!(
+                i16::from(ErrorCode::None),
+                members[0].error_code,
+                "unknown member leave should return per-member error"
+            );
+        }
+        otherwise => panic!("{otherwise:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn sync_with_wrong_generation_returns_illegal_generation() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    let cluster = "sync-wrong-gen";
+    let node = 12321;
+
+    const CLIENT_ID: &str = "console-consumer";
+    const GROUP_ID: &str = "sync-wrong-gen-group";
+    const RANGE: &str = "range";
+    const COOPERATIVE_STICKY: &str = "cooperative-sticky";
+    const PROTOCOL_TYPE: &str = "consumer";
+
+    let storage = StorageContainer::builder()
+        .cluster_id(cluster)
+        .node_id(node)
+        .advertised_listener(Url::parse("tcp://127.0.0.1:9092/")?)
+        .schema_registry(None)
+        .storage(storage_url()?)
+        .build()
+        .await?;
+
+    let mut s = Controller::with_storage(storage)?;
+
+    let protocols = [
+        JoinGroupRequestProtocol::default()
+            .name(RANGE.into())
+            .metadata(Bytes::from_static(b"meta")),
+        JoinGroupRequestProtocol::default()
+            .name(COOPERATIVE_STICKY.into())
+            .metadata(Bytes::from_static(b"meta")),
+    ];
+
+    // Join to establish the group
+    let member_id = match s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            "",
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?
+    {
+        Body::JoinGroupResponse(r) => {
+            assert_eq!(i16::from(ErrorCode::MemberIdRequired), r.error_code);
+            r.member_id
+        }
+        otherwise => panic!("{otherwise:?}"),
+    };
+
+    // Complete the join
+    let _ = s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            &member_id,
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?;
+
+    // Sync with WRONG generation (99 instead of 0)
+    let sync_response = s
+        .sync(
+            GROUP_ID,
+            99,
+            &member_id,
+            None,
+            Some(PROTOCOL_TYPE),
+            Some(RANGE),
+            Some(&[]),
+        )
+        .await?;
+
+    match sync_response {
+        Body::SyncGroupResponse(r) => {
+            let error = ErrorCode::try_from(r.error_code)?;
+            assert!(
+                error == ErrorCode::IllegalGeneration || error == ErrorCode::RebalanceInProgress,
+                "sync with wrong generation should return IllegalGeneration or RebalanceInProgress, got: {error:?}"
+            );
+        }
+        otherwise => panic!("{otherwise:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn heartbeat_with_stale_generation_returns_illegal_generation() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    let cluster = "hb-stale-gen";
+    let node = 12321;
+
+    const CLIENT_ID: &str = "console-consumer";
+    const GROUP_ID: &str = "hb-stale-gen-group";
+    const RANGE: &str = "range";
+    const COOPERATIVE_STICKY: &str = "cooperative-sticky";
+    const PROTOCOL_TYPE: &str = "consumer";
+
+    let storage = StorageContainer::builder()
+        .cluster_id(cluster)
+        .node_id(node)
+        .advertised_listener(Url::parse("tcp://127.0.0.1:9092/")?)
+        .schema_registry(None)
+        .storage(storage_url()?)
+        .build()
+        .await?;
+
+    let mut s = Controller::with_storage(storage)?;
+
+    let protocols = [
+        JoinGroupRequestProtocol::default()
+            .name(RANGE.into())
+            .metadata(Bytes::from_static(b"meta")),
+        JoinGroupRequestProtocol::default()
+            .name(COOPERATIVE_STICKY.into())
+            .metadata(Bytes::from_static(b"meta")),
+    ];
+
+    // Join to establish the group
+    let member_id = match s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            "",
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?
+    {
+        Body::JoinGroupResponse(r) => {
+            assert_eq!(i16::from(ErrorCode::MemberIdRequired), r.error_code);
+            r.member_id
+        }
+        otherwise => panic!("{otherwise:?}"),
+    };
+
+    // Complete the join (generation = 0)
+    let _ = s
+        .join(
+            Some(CLIENT_ID),
+            GROUP_ID,
+            45_000,
+            Some(300_000),
+            &member_id,
+            None,
+            PROTOCOL_TYPE,
+            Some(&protocols[..]),
+            None,
+        )
+        .await?;
+
+    // Sync to move to Formed state
+    let assignments = [SyncGroupRequestAssignment::default()
+        .member_id(member_id.clone())
+        .assignment(Bytes::from_static(b"assignment"))];
+
+    let _ = s
+        .sync(
+            GROUP_ID,
+            0,
+            &member_id,
+            None,
+            Some(PROTOCOL_TYPE),
+            Some(RANGE),
+            Some(&assignments[..]),
+        )
+        .await?;
+
+    // Heartbeat with correct generation should succeed
+    let hb_ok = s.heartbeat(GROUP_ID, 0, &member_id, None).await?;
+
+    match hb_ok {
+        Body::HeartbeatResponse(r) => {
+            assert_eq!(
+                ErrorCode::None,
+                ErrorCode::try_from(r.error_code)?,
+                "heartbeat with correct generation should succeed"
+            );
+        }
+        otherwise => panic!("{otherwise:?}"),
+    }
+
+    // Heartbeat with FUTURE generation should return IllegalGeneration
+    let hb_future = s.heartbeat(GROUP_ID, 999, &member_id, None).await?;
+
+    match hb_future {
+        Body::HeartbeatResponse(r) => {
+            let error = ErrorCode::try_from(r.error_code)?;
+            assert_eq!(
+                ErrorCode::IllegalGeneration,
+                error,
+                "heartbeat with future generation should return IllegalGeneration"
+            );
+        }
+        otherwise => panic!("{otherwise:?}"),
+    }
+
+    Ok(())
+}

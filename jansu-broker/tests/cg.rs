@@ -537,7 +537,6 @@ mod in_memory {
         .await
     }
 
-    #[ignore]
     #[tokio::test]
     async fn delete_unknown_consumer_group() -> Result<()> {
         let _guard = init_tracing()?;
@@ -664,7 +663,6 @@ mod lite {
         .await
     }
 
-    #[ignore]
     #[tokio::test]
     async fn delete_unknown_consumer_group() -> Result<()> {
         let _guard = init_tracing()?;
@@ -791,7 +789,6 @@ mod slatedb {
         .await
     }
 
-    #[ignore]
     #[tokio::test]
     async fn delete_unknown_consumer_group() -> Result<()> {
         let _guard = init_tracing()?;

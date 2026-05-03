@@ -3433,6 +3433,30 @@ impl Storage for Delegate {
         let mut responses = vec![];
 
         for (topition, offset_type) in offsets {
+            if c
+                .query_opt(
+                    "topition_select.sql",
+                    (
+                        self.cluster.as_str(),
+                        topition.topic(),
+                        topition.partition(),
+                    ),
+                )
+                .await
+                .inspect_err(|err| error!(?err, cluster = self.cluster, ?topition))?
+                .is_none()
+            {
+                responses.push((
+                    topition.clone(),
+                    ListOffsetResponse {
+                        error_code: ErrorCode::UnknownTopicOrPartition,
+                        timestamp: None,
+                        offset: None,
+                    },
+                ));
+                continue;
+            }
+
             let query = match (offset_type, isolation_level) {
                 (ListOffset::Earliest, _) => "list_earliest_offset.sql",
                 (ListOffset::Latest, IsolationLevel::ReadCommitted) => {
@@ -4519,11 +4543,11 @@ impl Storage for Delegate {
                     pc.execute(
                         "txn_detail_insert.sql",
                         (
+                            transaction_timeout_ms,
                             self.cluster.as_str(),
                             transaction_id,
                             producer,
                             epoch,
-                            transaction_timeout_ms
                         ),
                     )
                     .await
@@ -4934,7 +4958,7 @@ impl Storage for Delegate {
         let connection = self.pool.get().await?;
         let expired = connection
             .execute(
-                &include_sql!("sql/consumer_offset_delete_expired.sql"),
+                "consumer_offset_delete_expired.sql",
                 (self.cluster.as_str(), LiteTimestamp::from(now)),
             )
             .await?;

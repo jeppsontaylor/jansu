@@ -40,3 +40,7 @@ Do not do:
 - Do not treat group state as in-memory broker state only; stateless broker correctness must survive broker restart.
 
 Fresh session handoff: Start by building a group behavior matrix from Java client expectations. Add differential churn tests first, then adjust coordinator state transitions and storage conflict handling.
+
+## Completion record (2026-05-03)
+
+Milestone closed for **classic coordinator + committed offsets** with CI-aligned Postgres proof (`cg_dynamic`/`cg_static` `pg` tests after `just ci`), new `jansu-storage` Postgres consumer-offset tests, `leader_epoch_history` in `etc/initdb.d/010-schema.sql`, and `PgStorage::maintain` expiry delete wired through `prepare_execute`. Compatibility ledger proof lists for phase-owned API keys now cite libsql offset tests, Postgres offset tests, and `pg::` broker integration tests. Manifest status: `legacy-complete` (`phase-logs/index.json`). **Deferred:** ConsumerGroupHeartbeat (KIP-848); literal phase acceptance gate (Java + librdkafka + Sarama matrix) and ledger `semantic_status`/profile certification without differential policy.
