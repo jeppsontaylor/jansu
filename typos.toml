@@ -4,7 +4,7 @@ ignore-hidden = true
 extend-exclude = [
     # not our typos
     "license.html",
-    "tansu-sans-io/message",
+    "jansu-sans-io/message",
 ]
 
 [default]

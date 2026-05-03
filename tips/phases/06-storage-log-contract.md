@@ -9,11 +9,11 @@ Can run with: Phase 02, Phase 03, Phase 04, and Phase 05 after storage certifica
 Goal: Define the Kafka log/storage contract across PostgreSQL, SQLite/libSQL, S3/dynostore, SlateDB, Turso, and memory. PostgreSQL is the first production parity target; every other engine gets an explicit certification tier per feature.
 
 Current code anchors:
-- `tansu-storage/src/lib.rs` defines `Storage`, `StorageContainer`, `OffsetStage`, `ListOffsetResponse`, producer, transaction, group, and metadata methods.
-- `tansu-storage/src/pg.rs`, `tansu-storage/src/lite.rs`, `tansu-storage/src/dynostore.rs`, `tansu-storage/src/slate/storage.rs`, `tansu-storage/src/limbo.rs`, and `tansu-storage/src/null.rs` implement storage engines.
-- `tansu-storage/src/batch.rs` contains batch-oriented storage wrappers.
-- `tansu-storage/src/sql/` contains SQL query assets for offset and list-offset behavior.
-- `tansu-broker/tests/policy_compact_delete.rs`, `tansu-broker/tests/list_offsets.rs`, and `tansu-broker/tests/produce_fetch.rs` already exercise some log invariants.
+- `jansu-storage/src/lib.rs` defines `Storage`, `StorageContainer`, `OffsetStage`, `ListOffsetResponse`, producer, transaction, group, and metadata methods.
+- `jansu-storage/src/pg.rs`, `jansu-storage/src/lite.rs`, `jansu-storage/src/dynostore.rs`, `jansu-storage/src/slate/storage.rs`, `jansu-storage/src/limbo.rs`, and `jansu-storage/src/null.rs` implement storage engines.
+- `jansu-storage/src/batch.rs` contains batch-oriented storage wrappers.
+- `jansu-storage/src/sql/` contains SQL query assets for offset and list-offset behavior.
+- `jansu-broker/tests/policy_compact_delete.rs`, `jansu-broker/tests/list_offsets.rs`, and `jansu-broker/tests/produce_fetch.rs` already exercise some log invariants.
 
 Implementation steps:
 - Write a `KafkaLog` contract document and map it to the current `Storage` trait.

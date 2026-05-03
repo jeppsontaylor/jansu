@@ -9,11 +9,11 @@ Can run with: Phase 09, Phase 10, Phase 13, and Phase 14. It must finish before 
 Goal: Finish idempotent producer correctness: producer IDs, epochs, per-partition sequence windows, duplicate suppression, restart recovery, and Kafka-equivalent fencing errors.
 
 Current code anchors:
-- `tansu-storage/src/service/init_producer_id.rs` owns InitProducerId behavior.
-- `tansu-storage/src/service/produce.rs` must enforce idempotent append rules.
-- `tansu-storage/src/lib.rs` exposes producer initialization and transaction-adjacent storage methods.
-- `tansu-broker/tests/pg_init_producer.rs`, `txn.rs`, and `pg_txn.rs` cover current producer and transaction-adjacent behavior.
-- `tansu-sans-io` defines producer ID, producer epoch, sequence, and error-code fields in Produce and transaction APIs.
+- `jansu-storage/src/service/init_producer_id.rs` owns InitProducerId behavior.
+- `jansu-storage/src/service/produce.rs` must enforce idempotent append rules.
+- `jansu-storage/src/lib.rs` exposes producer initialization and transaction-adjacent storage methods.
+- `jansu-broker/tests/pg_init_producer.rs`, `txn.rs`, and `pg_txn.rs` cover current producer and transaction-adjacent behavior.
+- `jansu-sans-io` defines producer ID, producer epoch, sequence, and error-code fields in Produce and transaction APIs.
 
 Implementation steps:
 - Define storage contract for producer state: producer ID allocation, producer epoch, transactional ID mapping, per-topic-partition sequence windows, last offset, and snapshot/recovery.

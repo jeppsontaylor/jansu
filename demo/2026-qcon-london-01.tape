@@ -12,22 +12,22 @@ Set Theme "Builtin Light"
 
 Hide
 
-Type "pkill tansu"
+Type "pkill jansu"
 Enter
 
-Type@1ms "rm -f tansu.db*"
+Type@1ms "rm -f jansu.db*"
 Enter@1ms
 
 Type@1ms "rm -rf lake/*"
 Enter@1ms
 
-Type@1ms "cargo build --bin tansu --no-default-features --features libsql,parquet"
+Type@1ms "cargo build --bin jansu --no-default-features --features libsql,parquet"
 Enter@1ms
 
 Type@1ms "export RUST_LOG=warn"
 Enter@1ms
 
-Type@1ms "alias tansu=target/debug/tansu"
+Type@1ms "alias jansu=target/debug/jansu"
 Enter@1ms
 
 Ctrl+L
@@ -42,11 +42,11 @@ Sleep 6s
 
 Type "# start broker with schema validation and parquet output"
 Enter
-Type "tansu broker \"
+Type "jansu broker \"
 Enter
 Type "--silent \"
 Enter
-Type "--storage-engine=sqlite://tansu.db \"
+Type "--storage-engine=sqlite://jansu.db \"
 Enter
 Type "--schema-registry=file://./etc/schema \"
 Enter
@@ -57,7 +57,7 @@ Sleep 1
 
 Type "# create employee as a sink topic"
 Enter
-Type "tansu topic create employee --config=tansu.lake.sink=true"
+Type "jansu topic create employee --config=jansu.lake.sink=true"
 Enter
 Enter
 Sleep 1
@@ -72,7 +72,7 @@ Sleep 2s
 
 Type "# produce sample data using protobuf to employee topic"
 Enter
-Type "tansu cat produce employee etc/data/employees.json"
+Type "jansu cat produce employee etc/data/employees.json"
 Enter
 Enter
 Sleep 5s
@@ -93,25 +93,25 @@ Sleep 10s
 
 Type "# No Kafka produced to SQLite"
 Enter
-Type `sqlite3 -box tansu.db "select count(*) from record"`
+Type `sqlite3 -box jansu.db "select count(*) from record"`
 Enter
 Enter
 Sleep 5s
 
 Type "# topic metadata has been updated in SQLite"
 Enter
-Type `sqlite3 -box tansu.db "select * from watermark"`
+Type `sqlite3 -box jansu.db "select * from watermark"`
 Enter
 Sleep 5s
 
 Type "# broker memory usage RSS MB"
 Enter
-Type `ps -p $(pgrep tansu) -o rss= | awk '{print $1/1024 " MB"}'`
+Type `ps -p $(pgrep jansu) -o rss= | awk '{print $1/1024 " MB"}'`
 Enter
 Sleep 5s
 
 Hide
-Type "pkill tansu"
+Type "pkill jansu"
 Enter
 
 Ctrl+L

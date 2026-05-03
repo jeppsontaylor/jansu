@@ -1,6 +1,6 @@
 ## Phase 11 goal: real Kafka-style replication, not “shared-storage replication”
 
-Tansu’s current design is intentionally different from Kafka: the docs say brokers are stateless, do not replicate storage, have no ISR concept, and every broker can act as leader for every topic partition. The README also documents node `111` as the leader/ISR and says all brokers are node `111`. ([Tansu][1]) The code lines up with that: the CLI broker builder currently calls `.node_id(NODE_ID)`, and `NODE_ID` is defined as `111`.  
+Jansu’s current design is intentionally different from Kafka: the docs say brokers are stateless, do not replicate storage, have no ISR concept, and every broker can act as leader for every topic partition. The README also documents node `111` as the leader/ISR and says all brokers are node `111`. ([Jansu][1]) The code lines up with that: the CLI broker builder currently calls `.node_id(NODE_ID)`, and `NODE_ID` is defined as `111`.
 
 For Phase 11, do **not** fake Kafka replication by having multiple brokers read/write the same object-store path. Kafka replication means each partition has one leader, zero or more followers, per-replica log end offsets, an ISR, a high watermark, leader epochs, and follower truncation after leader change. Kafka’s own replication model is primary-backup: one leader per partition, followers replicate from the leader, the ISR tracks fully caught-up replicas, LEO is the tail of each replica log, and HW is the committed offset visible to consumers. ([Apache Wiki][2]) Kafka’s `acks=all` and `min.insync.replicas` semantics also require enough in-sync replicas before acknowledged writes are considered safe. ([Apache Wiki][3]) Leader epochs are used to detect stale leaders and truncate divergent logs after leader changes. ([Apache Wiki][4])
 
@@ -10,7 +10,7 @@ So Phase 11 should introduce a new **replicated broker mode** while preserving t
 
 # Definition of “Phase 11 complete”
 
-Phase 11 is done when Tansu can run a real multi-broker cluster with these properties:
+Phase 11 is done when Jansu can run a real multi-broker cluster with these properties:
 
 1. **Unique brokers**: brokers have distinct `node.id` values and distinct advertised listeners.
 2. **Replica assignment**: topic partitions have replica sets like `[1, 2, 3]`, not `[111, 111, 111]`.
@@ -37,7 +37,7 @@ Phase 11 is done when Tansu can run a real multi-broker cluster with these prope
 
 ## Add `replication.mode`
 
-Tansu currently makes durability the storage engine’s job. Phase 11 should not silently break that model. Add an explicit broker config:
+Jansu currently makes durability the storage engine’s job. Phase 11 should not silently break that model. Add an explicit broker config:
 
 ```text
 --replication-mode shared-storage | kafka
@@ -46,7 +46,7 @@ Tansu currently makes durability the storage engine’s job. Phase 11 should not
 Recommended defaults:
 
 ```text
-shared-storage   # current Tansu behavior
+shared-storage   # current Jansu behavior
 kafka            # new Phase 11 mode
 ```
 
@@ -59,21 +59,21 @@ In `kafka` mode:
 * followers replicate over broker-to-broker network;
 * metadata advertises real leaders, replicas, and ISR.
 
-This split is important because `DynoStore` currently has one global `clusters/{cluster}/topics/{topic}/partitions/{partition}/records/{offset}.batch` layout and a single `Watermark` per partition, which is perfect for Tansu’s current shared-storage model but not sufficient for Kafka-style per-broker replica logs. 
+This split is important because `DynoStore` currently has one global `clusters/{cluster}/topics/{topic}/partitions/{partition}/records/{offset}.batch` layout and a single `Watermark` per partition, which is perfect for Jansu’s current shared-storage model but not sufficient for Kafka-style per-broker replica logs.
 
 ---
 
 # Current repo areas Phase 11 must change
 
-Tansu already has useful hooks:
+Jansu already has useful hooks:
 
-* `Broker` has `node_id`, `cluster_id`, `incarnation_id`, listener URLs, storage, and maintenance loop. Broker startup calls `register()` and maintenance calls `storage.maintain(...)`, which is a good place to plug in broker heartbeats, leader health checks, and minimal leader election before Phase 12. 
-* `Storage` already exposes `produce`, `fetch`, `offset_stage`, `metadata`, `brokers`, `node`, `advertised_listener`, and `maintain`, but not replica progress, ISR, leader epoch, follower append, truncation, or per-replica log state. 
-* `RequestChannelService` mirrors `Storage` through `Request`/`Response` enums, so every new replication method added to `Storage` must also be added there. 
-* `FetchService` currently calls `storage.fetch(...)` and then `offset_stage(...)`, returning HW/LSO/log-start, but it does not distinguish client fetch from follower fetch or enforce leader epochs. 
-* `ProduceService` currently calls `storage.produce(...)` per batch and returns success/error, but it does not check partition leadership, ISR, min ISR, or wait for follower acknowledgements. 
-* `MetadataService` delegates metadata construction to storage, so storage backends must emit real leader/replica/ISR state. 
-* `null.rs` and existing metadata implementations currently emit one broker and duplicate `self.node` as every replica/ISR member, which must be fixed in replicated mode. 
+* `Broker` has `node_id`, `cluster_id`, `incarnation_id`, listener URLs, storage, and maintenance loop. Broker startup calls `register()` and maintenance calls `storage.maintain(...)`, which is a good place to plug in broker heartbeats, leader health checks, and minimal leader election before Phase 12.
+* `Storage` already exposes `produce`, `fetch`, `offset_stage`, `metadata`, `brokers`, `node`, `advertised_listener`, and `maintain`, but not replica progress, ISR, leader epoch, follower append, truncation, or per-replica log state.
+* `RequestChannelService` mirrors `Storage` through `Request`/`Response` enums, so every new replication method added to `Storage` must also be added there.
+* `FetchService` currently calls `storage.fetch(...)` and then `offset_stage(...)`, returning HW/LSO/log-start, but it does not distinguish client fetch from follower fetch or enforce leader epochs.
+* `ProduceService` currently calls `storage.produce(...)` per batch and returns success/error, but it does not check partition leadership, ISR, min ISR, or wait for follower acknowledgements.
+* `MetadataService` delegates metadata construction to storage, so storage backends must emit real leader/replica/ISR state.
+* `null.rs` and existing metadata implementations currently emit one broker and duplicate `self.node` as every replica/ISR member, which must be fixed in replicated mode.
 
 ---
 
@@ -84,61 +84,61 @@ Tansu already has useful hooks:
 | File                                                     | Required Phase 11 work                                                                                                                                                                                                                                                          |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Cargo.toml`                                             | Add workspace dev dependencies if absent: `proptest`, `test-log`, maybe `assert_matches`. Avoid heavy runtime deps unless necessary.                                                                                                                                            |
-| `tansu-broker/Cargo.toml`                                | Add any broker replication dependencies. Prefer existing `tokio`, `tracing`, `serde`, `uuid`, `url`.                                                                                                                                                                            |
-| `tansu-storage/Cargo.toml`                               | Add test-only dependencies for replication state-machine tests.                                                                                                                                                                                                                 |
-| `tansu-broker/src/lib.rs`                                | Replace `NODE_ID: 111` as the only broker ID with `DEFAULT_NODE_ID`; keep default for compatibility but stop hard-coding it everywhere.                                                                                                                                         |
-| `tansu-cli/src/cli/broker.rs`                            | Add `--node-id`, `--rack`, `--replication-mode`, `--inter-broker-listener-url`, `--advertised-inter-broker-listener-url`, `--replica-fetch-max-bytes`, `--replica-lag-time-max-ms`, `--replica-fetch-interval-ms`. Use `.node_id(self.node_id)` instead of `.node_id(NODE_ID)`. |
-| `tansu-broker/src/broker.rs`                             | Spawn replication manager tasks on startup; pass replication config into services; register broker endpoints/rack; heartbeat; shut down fetchers gracefully.                                                                                                                    |
-| `tansu-broker/src/service.rs`                            | Include replication-aware context/state if services need broker ID, role, or replication manager.                                                                                                                                                                               |
-| `tansu-broker/src/service/storage.rs`                    | Ensure Produce/Fetch/Metadata services are registered with replication-aware storage. Optionally add internal inter-broker routes if using Tansu-specific replication RPCs.                                                                                                     |
-| `tansu-storage/src/lib.rs`                               | Add replication types and trait methods: broker heartbeat, assignments, ISR updates, leader epoch checkpoints, follower append, truncation, per-replica LEO, HW update.                                                                                                         |
-| `tansu-storage/src/service.rs`                           | Add `Request`/`Response` variants and `RequestChannelService` forwarding for every new `Storage` method.                                                                                                                                                                        |
-| `tansu-storage/src/service/produce.rs`                   | Enforce leader-only produce; implement `acks` waiting; map ISR errors to Kafka error codes; populate `current_leader` where supported.                                                                                                                                          |
-| `tansu-storage/src/service/fetch.rs`                     | Split client fetch vs follower fetch; enforce leader epoch fencing; allow followers to read to LEO while clients read to HW.                                                                                                                                                    |
-| `tansu-storage/src/service/metadata.rs`                  | Return correct leader, replicas, ISR, offline replicas, leader epoch.                                                                                                                                                                                                           |
-| `tansu-storage/src/service/describe_cluster.rs`          | Return all registered/alive brokers, not just local broker/first broker controller.                                                                                                                                                                                             |
-| `tansu-storage/src/service/describe_topic_partitions.rs` | Return real partition leader, ISR, replicas, eligible/offline fields as protocol versions allow.                                                                                                                                                                                |
-| `tansu-storage/src/service/create_topics.rs`             | Assign replicas across brokers for RF > 1; validate RF against broker count in replicated mode.                                                                                                                                                                                 |
-| `tansu-storage/src/service/list_offsets.rs`              | Enforce current leader epoch and return leader epoch if protocol type supports it.                                                                                                                                                                                              |
-| `tansu-storage/src/null.rs`                              | Implement single-node behavior and test-friendly in-memory replicated state. Do not duplicate one node ID as RF times in replicated mode.                                                                                                                                       |
-| `tansu-storage/src/dynostore.rs`                         | Split shared metadata from per-broker replica-log paths or implement a `ReplicaLog` adapter under broker-specific prefixes.                                                                                                                                                     |
-| `tansu-storage/src/pg.rs`                                | Add replication metadata tables and per-broker replica records if PostgreSQL remains a supported metadata store in replicated mode.                                                                                                                                             |
-| `tansu-storage/src/lite.rs`                              | Same as PostgreSQL, but single-node or test-only multi-node unless file locking semantics are proven.                                                                                                                                                                           |
-| `tansu-storage/src/limbo.rs`                             | Same as SQLite/Turso backend strategy.                                                                                                                                                                                                                                          |
-| `tansu-storage/src/slate/storage.rs`                     | Implement replication state and local replica-log adapter.                                                                                                                                                                                                                      |
-| `tansu-storage/src/proxy.rs`                             | If `Storage` trait expands, implement forwarding or explicit “not available” for new replication methods.                                                                                                                                                                       |
-| `tansu-storage/src/batch.rs`                             | Add helpers for batch offset range, byte size, leader epoch stamping, and offset validation if not already available.                                                                                                                                                           |
-| `tansu-sans-io/...`                                      | Verify `OffsetForLeaderEpoch`, `LeaderAndIsr`, `AlterPartition`, `StopReplica`, and Fetch current-leader-epoch fields exist. If absent, add through the existing protocol generation path rather than hand-writing ad hoc structs.                                              |
+| `jansu-broker/Cargo.toml`                                | Add any broker replication dependencies. Prefer existing `tokio`, `tracing`, `serde`, `uuid`, `url`.                                                                                                                                                                            |
+| `jansu-storage/Cargo.toml`                               | Add test-only dependencies for replication state-machine tests.                                                                                                                                                                                                                 |
+| `jansu-broker/src/lib.rs`                                | Replace `NODE_ID: 111` as the only broker ID with `DEFAULT_NODE_ID`; keep default for compatibility but stop hard-coding it everywhere.                                                                                                                                         |
+| `jansu-cli/src/cli/broker.rs`                            | Add `--node-id`, `--rack`, `--replication-mode`, `--inter-broker-listener-url`, `--advertised-inter-broker-listener-url`, `--replica-fetch-max-bytes`, `--replica-lag-time-max-ms`, `--replica-fetch-interval-ms`. Use `.node_id(self.node_id)` instead of `.node_id(NODE_ID)`. |
+| `jansu-broker/src/broker.rs`                             | Spawn replication manager tasks on startup; pass replication config into services; register broker endpoints/rack; heartbeat; shut down fetchers gracefully.                                                                                                                    |
+| `jansu-broker/src/service.rs`                            | Include replication-aware context/state if services need broker ID, role, or replication manager.                                                                                                                                                                               |
+| `jansu-broker/src/service/storage.rs`                    | Ensure Produce/Fetch/Metadata services are registered with replication-aware storage. Optionally add internal inter-broker routes if using Jansu-specific replication RPCs.                                                                                                     |
+| `jansu-storage/src/lib.rs`                               | Add replication types and trait methods: broker heartbeat, assignments, ISR updates, leader epoch checkpoints, follower append, truncation, per-replica LEO, HW update.                                                                                                         |
+| `jansu-storage/src/service.rs`                           | Add `Request`/`Response` variants and `RequestChannelService` forwarding for every new `Storage` method.                                                                                                                                                                        |
+| `jansu-storage/src/service/produce.rs`                   | Enforce leader-only produce; implement `acks` waiting; map ISR errors to Kafka error codes; populate `current_leader` where supported.                                                                                                                                          |
+| `jansu-storage/src/service/fetch.rs`                     | Split client fetch vs follower fetch; enforce leader epoch fencing; allow followers to read to LEO while clients read to HW.                                                                                                                                                    |
+| `jansu-storage/src/service/metadata.rs`                  | Return correct leader, replicas, ISR, offline replicas, leader epoch.                                                                                                                                                                                                           |
+| `jansu-storage/src/service/describe_cluster.rs`          | Return all registered/alive brokers, not just local broker/first broker controller.                                                                                                                                                                                             |
+| `jansu-storage/src/service/describe_topic_partitions.rs` | Return real partition leader, ISR, replicas, eligible/offline fields as protocol versions allow.                                                                                                                                                                                |
+| `jansu-storage/src/service/create_topics.rs`             | Assign replicas across brokers for RF > 1; validate RF against broker count in replicated mode.                                                                                                                                                                                 |
+| `jansu-storage/src/service/list_offsets.rs`              | Enforce current leader epoch and return leader epoch if protocol type supports it.                                                                                                                                                                                              |
+| `jansu-storage/src/null.rs`                              | Implement single-node behavior and test-friendly in-memory replicated state. Do not duplicate one node ID as RF times in replicated mode.                                                                                                                                       |
+| `jansu-storage/src/dynostore.rs`                         | Split shared metadata from per-broker replica-log paths or implement a `ReplicaLog` adapter under broker-specific prefixes.                                                                                                                                                     |
+| `jansu-storage/src/pg.rs`                                | Add replication metadata tables and per-broker replica records if PostgreSQL remains a supported metadata store in replicated mode.                                                                                                                                             |
+| `jansu-storage/src/lite.rs`                              | Same as PostgreSQL, but single-node or test-only multi-node unless file locking semantics are proven.                                                                                                                                                                           |
+| `jansu-storage/src/limbo.rs`                             | Same as SQLite/Turso backend strategy.                                                                                                                                                                                                                                          |
+| `jansu-storage/src/slate/storage.rs`                     | Implement replication state and local replica-log adapter.                                                                                                                                                                                                                      |
+| `jansu-storage/src/proxy.rs`                             | If `Storage` trait expands, implement forwarding or explicit “not available” for new replication methods.                                                                                                                                                                       |
+| `jansu-storage/src/batch.rs`                             | Add helpers for batch offset range, byte size, leader epoch stamping, and offset validation if not already available.                                                                                                                                                           |
+| `jansu-sans-io/...`                                      | Verify `OffsetForLeaderEpoch`, `LeaderAndIsr`, `AlterPartition`, `StopReplica`, and Fetch current-leader-epoch fields exist. If absent, add through the existing protocol generation path rather than hand-writing ad hoc structs.                                              |
 
 ## New files to create
 
 | New file                                               | Purpose                                                                                                       |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `tansu-storage/src/replication/mod.rs`                 | Public replication module.                                                                                    |
-| `tansu-storage/src/replication/types.rs`               | `BrokerId`, `LeaderEpoch`, `ReplicaRole`, `PartitionReplicaState`, `ReplicaProgress`, `BrokerHeartbeat`, etc. |
-| `tansu-storage/src/replication/assignment.rs`          | Replica assignment algorithm and validation.                                                                  |
-| `tansu-storage/src/replication/epoch.rs`               | Leader epoch checkpoint logic.                                                                                |
-| `tansu-storage/src/replication/hwm.rs`                 | High-watermark calculation and ISR helpers.                                                                   |
-| `tansu-storage/src/replication/log.rs`                 | `ReplicaLog` trait: local append/read/truncate/leo/hw checkpoints.                                            |
-| `tansu-storage/src/replication/errors.rs`              | Internal replication errors mapped to Kafka `ErrorCode`.                                                      |
-| `tansu-storage/src/service/offset_for_leader_epoch.rs` | Service for Kafka `OffsetForLeaderEpoch` if not already present.                                              |
-| `tansu-broker/src/replication/mod.rs`                  | Broker-side replication subsystem.                                                                            |
-| `tansu-broker/src/replication/config.rs`               | Replication config loaded from CLI/env.                                                                       |
-| `tansu-broker/src/replication/manager.rs`              | Owns per-partition leader/follower tasks.                                                                     |
-| `tansu-broker/src/replication/fetcher.rs`              | Follower fetch loop.                                                                                          |
-| `tansu-broker/src/replication/leader.rs`               | Leader-side ISR, waiters, HW advancement.                                                                     |
-| `tansu-broker/src/replication/client.rs`               | Inter-broker client for Fetch / OffsetForLeaderEpoch / optional internal RPC.                                 |
-| `tansu-broker/src/replication/election.rs`             | Minimal Phase-11 leader change handling, later replaced/refined by Phase 12 controller.                       |
-| `tansu-broker/src/replication/waiter.rs`               | Produce waiters for `acks=all`.                                                                               |
-| `tansu-broker/tests/common/cluster.rs`                 | Spawn 1/3/5 broker test clusters with unique ports/node IDs.                                                  |
-| `tansu-storage/tests/replication_assignment.rs`        | Replica assignment tests.                                                                                     |
-| `tansu-storage/tests/replication_hwm.rs`               | High watermark and ISR unit tests.                                                                            |
-| `tansu-storage/tests/leader_epoch.rs`                  | Leader epoch checkpoint/truncation tests.                                                                     |
-| `tansu-broker/tests/replication_metadata.rs`           | Kafka metadata correctness.                                                                                   |
-| `tansu-broker/tests/replication_produce_acks.rs`       | `acks=1`, `acks=all`, min ISR behavior.                                                                       |
-| `tansu-broker/tests/replication_follower_fetch.rs`     | Follower catch-up and fetch beyond HW.                                                                        |
-| `tansu-broker/tests/replication_leader_change.rs`      | Leader failover, epoch bump, truncation.                                                                      |
-| `tansu-broker/tests/replication_restart.rs`            | Restart/recovery of logs, epochs, HW, ISR.                                                                    |
+| `jansu-storage/src/replication/mod.rs`                 | Public replication module.                                                                                    |
+| `jansu-storage/src/replication/types.rs`               | `BrokerId`, `LeaderEpoch`, `ReplicaRole`, `PartitionReplicaState`, `ReplicaProgress`, `BrokerHeartbeat`, etc. |
+| `jansu-storage/src/replication/assignment.rs`          | Replica assignment algorithm and validation.                                                                  |
+| `jansu-storage/src/replication/epoch.rs`               | Leader epoch checkpoint logic.                                                                                |
+| `jansu-storage/src/replication/hwm.rs`                 | High-watermark calculation and ISR helpers.                                                                   |
+| `jansu-storage/src/replication/log.rs`                 | `ReplicaLog` trait: local append/read/truncate/leo/hw checkpoints.                                            |
+| `jansu-storage/src/replication/errors.rs`              | Internal replication errors mapped to Kafka `ErrorCode`.                                                      |
+| `jansu-storage/src/service/offset_for_leader_epoch.rs` | Service for Kafka `OffsetForLeaderEpoch` if not already present.                                              |
+| `jansu-broker/src/replication/mod.rs`                  | Broker-side replication subsystem.                                                                            |
+| `jansu-broker/src/replication/config.rs`               | Replication config loaded from CLI/env.                                                                       |
+| `jansu-broker/src/replication/manager.rs`              | Owns per-partition leader/follower tasks.                                                                     |
+| `jansu-broker/src/replication/fetcher.rs`              | Follower fetch loop.                                                                                          |
+| `jansu-broker/src/replication/leader.rs`               | Leader-side ISR, waiters, HW advancement.                                                                     |
+| `jansu-broker/src/replication/client.rs`               | Inter-broker client for Fetch / OffsetForLeaderEpoch / optional internal RPC.                                 |
+| `jansu-broker/src/replication/election.rs`             | Minimal Phase-11 leader change handling, later replaced/refined by Phase 12 controller.                       |
+| `jansu-broker/src/replication/waiter.rs`               | Produce waiters for `acks=all`.                                                                               |
+| `jansu-broker/tests/common/cluster.rs`                 | Spawn 1/3/5 broker test clusters with unique ports/node IDs.                                                  |
+| `jansu-storage/tests/replication_assignment.rs`        | Replica assignment tests.                                                                                     |
+| `jansu-storage/tests/replication_hwm.rs`               | High watermark and ISR unit tests.                                                                            |
+| `jansu-storage/tests/leader_epoch.rs`                  | Leader epoch checkpoint/truncation tests.                                                                     |
+| `jansu-broker/tests/replication_metadata.rs`           | Kafka metadata correctness.                                                                                   |
+| `jansu-broker/tests/replication_produce_acks.rs`       | `acks=1`, `acks=all`, min ISR behavior.                                                                       |
+| `jansu-broker/tests/replication_follower_fetch.rs`     | Follower catch-up and fetch beyond HW.                                                                        |
+| `jansu-broker/tests/replication_leader_change.rs`      | Leader failover, epoch bump, truncation.                                                                      |
+| `jansu-broker/tests/replication_restart.rs`            | Restart/recovery of logs, epochs, HW, ISR.                                                                    |
 | `tests/docker/docker-compose.replication.yaml`         | External smoke tests with Kafka CLI/AdminClient.                                                              |
 
 ---
@@ -147,16 +147,16 @@ Tansu already has useful hooks:
 
 ## Step 0: Introduce explicit replicated mode
 
-Do this first so Phase 11 can be merged incrementally without breaking current Tansu users.
+Do this first so Phase 11 can be merged incrementally without breaking current Jansu users.
 
 ### CLI change
 
-In `tansu-cli/src/cli/broker.rs`, add:
+In `jansu-cli/src/cli/broker.rs`, add:
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum ReplicationMode {
-    /// Current Tansu behavior: brokers are stateless and use shared storage.
+    /// Current Jansu behavior: brokers are stateless and use shared storage.
     SharedStorage,
 
     /// Kafka-like behavior: per-broker replica logs, leaders, followers, ISR.
@@ -169,7 +169,7 @@ Then extend `Arg`:
 ```rust
 /// Unique broker ID. Required for Kafka-style replication.
 /// Defaults to 111 for shared-storage compatibility.
-#[arg(long, env = "NODE_ID", default_value_t = tansu_broker::DEFAULT_NODE_ID)]
+#[arg(long, env = "NODE_ID", default_value_t = jansu_broker::DEFAULT_NODE_ID)]
 node_id: i32,
 
 /// Broker rack, used by replica assignment and metadata.
@@ -203,10 +203,10 @@ with:
 
 ### Broker default ID change
 
-In `tansu-broker/src/lib.rs`:
+In `jansu-broker/src/lib.rs`:
 
 ```rust
-/// Compatibility default for current single-node/shared-storage Tansu mode.
+/// Compatibility default for current single-node/shared-storage Jansu mode.
 /// In Kafka replication mode, users must supply unique node IDs.
 pub const DEFAULT_NODE_ID: i32 = 111;
 ```
@@ -237,7 +237,7 @@ Later, broker registration will reject duplicate live broker IDs.
 
 ## Step 1: Add the replication data model
 
-Create `tansu-storage/src/replication/types.rs`.
+Create `jansu-storage/src/replication/types.rs`.
 
 Core types:
 
@@ -359,13 +359,13 @@ That broker-local prefix is the key difference from current shared-storage `reco
 
 ## Step 2: Add a `ReplicaLog` abstraction
 
-Create `tansu-storage/src/replication/log.rs`.
+Create `jansu-storage/src/replication/log.rs`.
 
 This avoids bolting all replication logic into `Storage::produce`/`Storage::fetch`.
 
 ```rust
 use async_trait::async_trait;
-use tansu_sans_io::{IsolationLevel, record::deflated};
+use jansu_sans_io::{IsolationLevel, record::deflated};
 
 use crate::{Result, Topition};
 use super::types::{LeaderEpoch, Offset};
@@ -454,7 +454,7 @@ Never “renumber” follower batches. Kafka followers store the same offsets as
 
 ## Step 3: Extend the `Storage` trait
 
-In `tansu-storage/src/lib.rs`, add replication APIs. Keep existing APIs so current services still compile.
+In `jansu-storage/src/lib.rs`, add replication APIs. Keep existing APIs so current services still compile.
 
 ```rust
 #[async_trait]
@@ -534,13 +534,13 @@ pub trait Storage {
 
 ### Why this belongs in `Storage`
 
-Tansu already routes API services through `Storage`. `RequestChannelService` wraps storage calls using a `Request`/`Response` enum. Adding these methods at the trait layer lets `DynoStore`, PostgreSQL, SQLite, SlateDB, and test stores implement the same semantics and lets services stay backend-agnostic. 
+Jansu already routes API services through `Storage`. `RequestChannelService` wraps storage calls using a `Request`/`Response` enum. Adding these methods at the trait layer lets `DynoStore`, PostgreSQL, SQLite, SlateDB, and test stores implement the same semantics and lets services stay backend-agnostic.
 
 ---
 
 ## Step 4: Mirror new methods through `RequestChannelService`
 
-In `tansu-storage/src/service.rs`, add request variants:
+In `jansu-storage/src/service.rs`, add request variants:
 
 ```rust
 pub enum Request {
@@ -720,7 +720,7 @@ Kafka has more specific broker epoch semantics, but for Phase 11 this protects t
 
 ## Step 6: Replica assignment for topic creation
 
-In `tansu-storage/src/replication/assignment.rs`:
+In `jansu-storage/src/replication/assignment.rs`:
 
 ```rust
 pub fn assign_replicas(
@@ -829,7 +829,7 @@ Phase 12 can replace this with a real controller/quorum.
 
 ## Step 8: Leader-only produce path
 
-Modify `tansu-storage/src/service/produce.rs`.
+Modify `jansu-storage/src/service/produce.rs`.
 
 Before appending:
 
@@ -860,7 +860,7 @@ fn not_leader_error(
         .record_errors(Some(vec![]))
         .error_message(Some("not partition leader".into()))
         .current_leader(state.leader.map(|leader_id| {
-            tansu_sans_io::produce_response::LeaderIdAndEpoch::default()
+            jansu_sans_io::produce_response::LeaderIdAndEpoch::default()
                 .leader_id(leader_id)
                 .leader_epoch(state.leader_epoch)
         }))
@@ -1049,7 +1049,7 @@ Do not let consumer fetch read beyond HW. That is the main consumer-visible guar
 
 ## Step 10: High watermark advancement
 
-Create `tansu-storage/src/replication/hwm.rs`.
+Create `jansu-storage/src/replication/hwm.rs`.
 
 Kafka’s HW is effectively the highest offset replicated to all ISR members, so calculate it from ISR replica LEOs. Keep it monotonic.
 
@@ -1148,7 +1148,7 @@ Never advance HW based on non-ISR followers. Never add a follower to ISR before 
 
 ## Step 11: Follower fetch loop
 
-Create `tansu-broker/src/replication/fetcher.rs`.
+Create `jansu-broker/src/replication/fetcher.rs`.
 
 ```rust
 pub struct ReplicaFetcher<S, C> {
@@ -1305,7 +1305,7 @@ Do not append first and “fix later.”
 
 ## Step 12: Leader epoch checkpoints
 
-Create `tansu-storage/src/replication/epoch.rs`.
+Create `jansu-storage/src/replication/epoch.rs`.
 
 Leader epoch checkpoint rules:
 
@@ -1359,7 +1359,7 @@ fn end_offset_for_epoch_returns_next_epoch_start() {
 
 Milestone 12 is the full cluster controller, but Phase 11 cannot test truncation on leader change without some leader movement mechanism. Implement a **minimal storage-backed election** in Phase 11 and later replace/refine it in Phase 12.
 
-Add `tansu-broker/src/replication/election.rs`.
+Add `jansu-broker/src/replication/election.rs`.
 
 Rules:
 
@@ -1438,7 +1438,7 @@ Phase 11 minimal election is not the final controller. But it must still be safe
 
 ## Step 14: Replication manager
 
-Create `tansu-broker/src/replication/manager.rs`.
+Create `jansu-broker/src/replication/manager.rs`.
 
 Responsibilities:
 
@@ -1506,7 +1506,7 @@ pub async fn serve(&mut self, started: Instant) -> Result<()> {
 
 ### Steering
 
-Use `JoinSet` and the existing cancellation style in `Broker::main()`/`listen()` so replication tasks stop cleanly when the broker shuts down. Tansu already uses a cancellation token and periodic maintenance loop, so build on that instead of adding a separate runtime. 
+Use `JoinSet` and the existing cancellation style in `Broker::main()`/`listen()` so replication tasks stop cleanly when the broker shuts down. Jansu already uses a cancellation token and periodic maintenance loop, so build on that instead of adding a separate runtime.
 
 ---
 
@@ -1526,10 +1526,10 @@ Pros:
 
 Cons:
 
-* requires all relevant protocol structs/services in `tansu-sans-io`;
+* requires all relevant protocol structs/services in `jansu-sans-io`;
 * needs connection pooling/auth/TLS handling.
 
-## Option B: Add Tansu internal replication RPC
+## Option B: Add Jansu internal replication RPC
 
 Pros:
 
@@ -1746,7 +1746,7 @@ For each partition:
 
 # ISR state machine
 
-Create `tansu-broker/src/replication/leader.rs`.
+Create `jansu-broker/src/replication/leader.rs`.
 
 ```rust
 pub async fn leader_maintenance<S>(
@@ -1895,7 +1895,7 @@ Expected: `UNKNOWN_LEADER_EPOCH`.
 
 ## Unit tests
 
-### `tansu-storage/tests/replication_assignment.rs`
+### `jansu-storage/tests/replication_assignment.rs`
 
 ```rust
 #[test]
@@ -1909,7 +1909,7 @@ fn assign_replicas_spreads_leaders() {
 }
 ```
 
-### `tansu-storage/tests/replication_hwm.rs`
+### `jansu-storage/tests/replication_hwm.rs`
 
 ```rust
 #[test]
@@ -1937,7 +1937,7 @@ fn high_watermark_does_not_advance_below_min_isr() {
 }
 ```
 
-### `tansu-storage/tests/leader_epoch.rs`
+### `jansu-storage/tests/leader_epoch.rs`
 
 Test:
 
@@ -1948,11 +1948,11 @@ Test:
 
 ## Broker integration tests
 
-### `tansu-broker/tests/replication_metadata.rs`
+### `jansu-broker/tests/replication_metadata.rs`
 
 1. Start brokers 1, 2, 3.
 2. Create topic `rf3` with RF=3.
-3. Describe topic using Kafka AdminClient or Tansu protocol service.
+3. Describe topic using Kafka AdminClient or Jansu protocol service.
 4. Assert:
 
    * leader is one of `[1,2,3]`;
@@ -1960,7 +1960,7 @@ Test:
    * ISR starts with leader and eventually becomes all replicas;
    * no `111` unless broker ID is actually 111.
 
-### `tansu-broker/tests/replication_produce_acks.rs`
+### `jansu-broker/tests/replication_produce_acks.rs`
 
 Cases:
 
@@ -1969,7 +1969,7 @@ Cases:
 * Kill two replicas, ISR becomes 1, `acks=all`: `NOT_ENOUGH_REPLICAS`.
 * `acks=1` with only leader alive: success if leader local append succeeds.
 
-### `tansu-broker/tests/replication_follower_fetch.rs`
+### `jansu-broker/tests/replication_follower_fetch.rs`
 
 1. Create RF=3 topic.
 2. Produce 100 records.
@@ -1977,7 +1977,7 @@ Cases:
 4. Assert ISR includes all three brokers.
 5. Assert consumers only see up to HW.
 
-### `tansu-broker/tests/replication_leader_change.rs`
+### `jansu-broker/tests/replication_leader_change.rs`
 
 1. Produce records fully replicated.
 2. Pause one follower.
@@ -1989,7 +1989,7 @@ Cases:
 8. Produce new records.
 9. Assert all replicas converge.
 
-### `tansu-broker/tests/replication_restart.rs`
+### `jansu-broker/tests/replication_restart.rs`
 
 1. Produce records.
 2. Stop all brokers.
@@ -2007,40 +2007,40 @@ Create `tests/docker/docker-compose.replication.yaml`:
 
 ```yaml
 services:
-  tansu-1:
+  jansu-1:
     command:
-      - tansu
+      - jansu
       - broker
       - --replication-mode=kafka
       - --node-id=1
       - --listener-url=tcp://0.0.0.0:9092
-      - --advertised-listener-url=tcp://tansu-1:9092
-      - --storage-engine=s3://tansu-repl/
-  tansu-2:
+      - --advertised-listener-url=tcp://jansu-1:9092
+      - --storage-engine=s3://jansu-repl/
+  jansu-2:
     command:
-      - tansu
+      - jansu
       - broker
       - --replication-mode=kafka
       - --node-id=2
       - --listener-url=tcp://0.0.0.0:9092
-      - --advertised-listener-url=tcp://tansu-2:9092
-      - --storage-engine=s3://tansu-repl/
-  tansu-3:
+      - --advertised-listener-url=tcp://jansu-2:9092
+      - --storage-engine=s3://jansu-repl/
+  jansu-3:
     command:
-      - tansu
+      - jansu
       - broker
       - --replication-mode=kafka
       - --node-id=3
       - --listener-url=tcp://0.0.0.0:9092
-      - --advertised-listener-url=tcp://tansu-3:9092
-      - --storage-engine=s3://tansu-repl/
+      - --advertised-listener-url=tcp://jansu-3:9092
+      - --storage-engine=s3://jansu-repl/
 ```
 
 Then smoke:
 
 ```bash
 kafka-topics \
-  --bootstrap-server tansu-1:9092 \
+  --bootstrap-server jansu-1:9092 \
   --create \
   --topic rf3 \
   --partitions 3 \
@@ -2048,7 +2048,7 @@ kafka-topics \
   --config min.insync.replicas=2
 
 kafka-topics \
-  --bootstrap-server tansu-1:9092 \
+  --bootstrap-server jansu-1:9092 \
   --describe \
   --topic rf3
 ```
@@ -2065,21 +2065,21 @@ Topic: rf3 Partition: 2 Leader: 3 Replicas: 3,1,2 Isr: 3,1,2
 
 # Metrics to add
 
-Add these metrics in `tansu-broker/src/replication/leader.rs` and `fetcher.rs`:
+Add these metrics in `jansu-broker/src/replication/leader.rs` and `fetcher.rs`:
 
 | Metric                                        | Type    | Labels                                     |
 | --------------------------------------------- | ------- | ------------------------------------------ |
-| `tansu_replication_fetch_requests_total`      | counter | `topic`, `partition`, `leader`, `follower` |
-| `tansu_replication_fetch_bytes_total`         | counter | `topic`, `partition`, `leader`, `follower` |
-| `tansu_replication_lag_records`               | gauge   | `topic`, `partition`, `leader`, `follower` |
-| `tansu_replication_isr_size`                  | gauge   | `topic`, `partition`                       |
-| `tansu_replication_high_watermark`            | gauge   | `topic`, `partition`                       |
-| `tansu_replication_leader_epoch`              | gauge   | `topic`, `partition`, `leader`             |
-| `tansu_replication_truncations_total`         | counter | `topic`, `partition`, `broker`             |
-| `tansu_replication_not_enough_replicas_total` | counter | `topic`, `partition`                       |
-| `tansu_replication_leader_changes_total`      | counter | `topic`, `partition`                       |
+| `jansu_replication_fetch_requests_total`      | counter | `topic`, `partition`, `leader`, `follower` |
+| `jansu_replication_fetch_bytes_total`         | counter | `topic`, `partition`, `leader`, `follower` |
+| `jansu_replication_lag_records`               | gauge   | `topic`, `partition`, `leader`, `follower` |
+| `jansu_replication_isr_size`                  | gauge   | `topic`, `partition`                       |
+| `jansu_replication_high_watermark`            | gauge   | `topic`, `partition`                       |
+| `jansu_replication_leader_epoch`              | gauge   | `topic`, `partition`, `leader`             |
+| `jansu_replication_truncations_total`         | counter | `topic`, `partition`, `broker`             |
+| `jansu_replication_not_enough_replicas_total` | counter | `topic`, `partition`                       |
+| `jansu_replication_leader_changes_total`      | counter | `topic`, `partition`                       |
 
-Tansu already uses OpenTelemetry metrics in storage service code, so keep the same style. 
+Jansu already uses OpenTelemetry metrics in storage service code, so keep the same style.
 
 ---
 
@@ -2087,7 +2087,7 @@ Tansu already uses OpenTelemetry metrics in storage service code, so keep the sa
 
 | Config                           |                      Default | Purpose                                                |
 | -------------------------------- | ---------------------------: | ------------------------------------------------------ |
-| `replication.mode`               |             `shared-storage` | Existing Tansu mode vs Kafka replication mode.         |
+| `replication.mode`               |             `shared-storage` | Existing Jansu mode vs Kafka replication mode.         |
 | `node.id`                        |                        `111` | Compatibility default; must be unique in Kafka mode.   |
 | `broker.rack`                    |                        unset | Rack-aware assignment later.                           |
 | `replica.fetch.max.bytes`        | `1MiB` or Kafka-like default | Follower fetch batch size.                             |
@@ -2142,9 +2142,9 @@ Do not advertise a stale ISR.
 
 Touch:
 
-* `tansu-broker/src/lib.rs`
-* `tansu-cli/src/cli/broker.rs`
-* `tansu-broker/src/broker.rs`
+* `jansu-broker/src/lib.rs`
+* `jansu-cli/src/cli/broker.rs`
+* `jansu-broker/src/broker.rs`
 * tests that assume node `111`
 
 Acceptance:
@@ -2158,9 +2158,9 @@ Acceptance:
 
 Touch/create:
 
-* `tansu-storage/src/replication/*`
-* `tansu-storage/src/lib.rs`
-* `tansu-storage/src/service.rs`
+* `jansu-storage/src/replication/*`
+* `jansu-storage/src/lib.rs`
+* `jansu-storage/src/service.rs`
 * all `Storage` implementers with stub/single-node behavior
 
 Acceptance:
@@ -2187,7 +2187,7 @@ Acceptance:
 
 Touch/create:
 
-* `tansu-storage/src/replication/log.rs`
+* `jansu-storage/src/replication/log.rs`
 * `dynostore.rs`
 * `null.rs`
 * SQL backends as needed
@@ -2248,7 +2248,7 @@ Acceptance:
 
 Touch/create:
 
-* `tansu-broker/tests/common/cluster.rs`
+* `jansu-broker/tests/common/cluster.rs`
 * `replication_metadata.rs`
 * `replication_produce_acks.rs`
 * `replication_follower_fetch.rs`
@@ -2293,9 +2293,9 @@ Phase 11 is complete when all of this is true:
 [ ] 3-broker RF=3 Kafka CLI smoke test passes.
 ```
 
-The big conceptual win: after this phase, Tansu stops advertising “all brokers are node 111” in Kafka replication mode and starts behaving like a real Kafka cluster from the client’s point of view: leaders are real, followers replicate, ISR matters, HW controls visibility, and leader epochs protect against log divergence.
+The big conceptual win: after this phase, Jansu stops advertising “all brokers are node 111” in Kafka replication mode and starts behaving like a real Kafka cluster from the client’s point of view: leaders are real, followers replicate, ISR matters, HW controls visibility, and leader epochs protect against log divergence.
 
-[1]: https://docs.tansu.io/docs/stateless-brokers?utm_source=chatgpt.com "Stateless Brokers - Docs"
+[1]: https://docs.jansu.io/docs/stateless-brokers?utm_source=chatgpt.com "Stateless Brokers - Docs"
 [2]: https://cwiki.apache.org/confluence/display/KAFKA/Kafka%2BReplication?utm_source=chatgpt.com "Kafka Replication - Apache Kafka - Apache Software Foundation"
 [3]: https://cwiki.apache.org/confluence/display/KAFKA/KIP-926%3A%2Bintroducing%2Backs%3Dmin.insync.replicas%2Bconfig?utm_source=chatgpt.com "KIP-926: introducing acks=min.insync.replicas config - Apache Kafka - Apache Software Foundation"
 [4]: https://cwiki.apache.org/confluence/display/KAFKA/KIP-101%2B-%2BAlter%2BReplication%2BProtocol%2Bto%2Buse%2BLeader%2BEpoch%2Brather%2Bthan%2BHigh%2BWatermark%2Bfor%2BTruncation?utm_source=chatgpt.com "KIP-101 - Alter Replication Protocol to use Leader Epoch rather than High Watermark for Truncation - Apache Kafka - Apache Software Foundation"

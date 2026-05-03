@@ -9,12 +9,12 @@ Can run with: Phase 03, Phase 04, Phase 06, and Phase 14 when route advertisemen
 Goal: Add safe route coverage for missing stable Kafka ecosystem APIs. When semantics are incomplete, the route must return exact Kafka "not supported yet" behavior and must not be advertised as semantically supported.
 
 Current code anchors:
-- `tansu-broker/src/service/storage.rs` routes storage-backed APIs.
-- `tansu-broker/src/service/coordinator.rs` routes classic consumer group APIs.
-- `tansu-broker/src/service/auth.rs` routes SASL APIs.
-- `tansu-storage/src/service.rs` exports storage-backed service modules.
-- `tansu-sans-io` has generated request/response structs for many Kafka APIs not yet routed.
-- `tansu-service/src/api.rs` and the Phase 02 registry determine whether route presence is advertised.
+- `jansu-broker/src/service/storage.rs` routes storage-backed APIs.
+- `jansu-broker/src/service/coordinator.rs` routes classic consumer group APIs.
+- `jansu-broker/src/service/auth.rs` routes SASL APIs.
+- `jansu-storage/src/service.rs` exports storage-backed service modules.
+- `jansu-sans-io` has generated request/response structs for many Kafka APIs not yet routed.
+- `jansu-service/src/api.rs` and the Phase 02 registry determine whether route presence is advertised.
 
 Implementation steps:
 - Generate a route coverage report from `RootMessageMeta` API keys, broker route registration, and the Phase 01 ledger.

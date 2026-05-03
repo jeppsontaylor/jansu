@@ -1,0 +1,38 @@
+# Phase 12 - Transactions EOS Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/12-transactions-eos.md`
+
+## Intent
+
+- Track transactional producer, offset commit, abort, commit, and exactly-once behavior.
+
+## Files Touched
+
+- `tips/phases/12-transactions-eos.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future Phase 12 attempts.
+
+## Residual Risks
+
+- Transaction semantics remain blocked on idempotent producer and durable fencing proof.

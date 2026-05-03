@@ -2,9 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Start Here
+
+For phase work, audit work, or prompts like "progress on MASTER_PLAN and audit", read `AGENTS.md` first. Then read `MASTER_PLAN.md`, `AUDIT.md`, `phase-logs/index.json`, and the relevant `tips/phases` document.
+
+All phase-backed work must update `phase-logs`, and compatibility claims must point to `docs/compatibility/kafka-4.2-ledger.json` plus test proof.
+
 ## Project Overview
 
-Tansu is a stateless, Apache Kafka-compatible broker written in Rust. It is a drop-in replacement for Apache Kafka with pluggable storage backends: PostgreSQL, libSQL (SQLite), S3/object store, and memory. Schema-backed topics (Avro, JSON Schema, Protocol Buffers) can be written as Apache Iceberg or Delta Lake tables.
+Jansu is a stateless, Apache Kafka-compatible broker written in Rust. It is a drop-in replacement for Apache Kafka with pluggable storage backends: PostgreSQL, libSQL (SQLite), S3/object store, and memory. Schema-backed topics (Avro, JSON Schema, Protocol Buffers) can be written as Apache Iceberg or Delta Lake tables.
 
 - Rust edition 2024, toolchain pinned to 1.93 (`rust-toolchain.toml`)
 - License: Apache-2.0
@@ -42,38 +48,38 @@ just broker-memory     # broker with in-memory backend only
 just broker-s3         # broker with S3/minio backend only
 ```
 
-Note: when running tansu directly (not via docker compose), set `AWS_ENDPOINT="http://localhost:9000"` in `.env`.
+Note: when running jansu directly (not via docker compose), set `AWS_ENDPOINT="http://localhost:9000"` in `.env`.
 
 ## Architecture
 
-Cargo workspace with 15 member crates, producing a single binary (`tansu`) with subcommands: `broker` (default), `cat`, `topic`, `generator`, `perf`, `proxy`.
+Cargo workspace with 15 member crates, producing a single binary (`jansu`) with subcommands: `broker` (default), `cat`, `topic`, `generator`, `perf`, `proxy`.
 
 ### Key Crates
 
 | Crate | Role |
 |-------|------|
-| `tansu` | Binary entry point, subcommand dispatch |
-| `tansu-broker` | Kafka API broker: `Broker<G, S>` generic over Coordinator + Storage |
-| `tansu-sans-io` | **Code-generated** Kafka wire protocol (pure serde, no I/O) |
-| `tansu-service` | Network service layers built on `rama` (Layer/Service composition) |
-| `tansu-storage` | Storage abstraction: `StorageContainer` enum over backends |
-| `tansu-schema` | Schema registry + Iceberg/Delta/Parquet lake integration |
-| `tansu-client` | Async Kafka protocol client (rama service layers) |
-| `tansu-model` | Kafka JSON protocol definitions (used in build.rs) |
-| `tansu-cat` | CLI: produce/consume Avro, JSON, Protobuf messages |
-| `tansu-cli` | Clap-based CLI argument parsing |
+| `jansu` | Binary entry point, subcommand dispatch |
+| `jansu-broker` | Kafka API broker: `Broker<G, S>` generic over Coordinator + Storage |
+| `jansu-sans-io` | **Code-generated** Kafka wire protocol (pure serde, no I/O) |
+| `jansu-service` | Network service layers built on `rama` (Layer/Service composition) |
+| `jansu-storage` | Storage abstraction: `StorageContainer` enum over backends |
+| `jansu-schema` | Schema registry + Iceberg/Delta/Parquet lake integration |
+| `jansu-client` | Async Kafka protocol client (rama service layers) |
+| `jansu-model` | Kafka JSON protocol definitions (used in build.rs) |
+| `jansu-cat` | CLI: produce/consume Avro, JSON, Protobuf messages |
+| `jansu-cli` | Clap-based CLI argument parsing |
 
-### Sans-I/O Code Generation (`tansu-sans-io`)
+### Sans-I/O Code Generation (`jansu-sans-io`)
 
-`tansu-sans-io/build.rs` reads ~185 official Kafka JSON message descriptors from `tansu-sans-io/message/*.json` and generates typed Rust structs for every request/response pair. **Do not manually edit generated files.** The message JSON files are from upstream Apache Kafka.
+`jansu-sans-io/build.rs` reads ~185 official Kafka JSON message descriptors from `jansu-sans-io/message/*.json` and generates typed Rust structs for every request/response pair. **Do not manually edit generated files.** The message JSON files are from upstream Apache Kafka.
 
-### Service Layer Pattern (`tansu-service`)
+### Service Layer Pattern (`jansu-service`)
 
 Uses `rama` crate for Layer/Service composition:
 - `TcpBytesLayer` (TCP) -> `BytesFrameLayer` (bytes -> Kafka Frame) -> `FrameRouteService` (route to typed handlers) -> `FrameBytesLayer` -> `BytesTcpService`
 - Same layering pattern used for broker, proxy, and CLI clients
 
-### Storage Backends (`tansu-storage`)
+### Storage Backends (`jansu-storage`)
 
 Selected at compile time via feature flags, dispatched at runtime through `StorageContainer` enum:
 - `memory://` - in-memory (feature: `dynostore`)
@@ -85,7 +91,7 @@ Selected at compile time via feature flags, dispatched at runtime through `Stora
 ### Broker Specifics
 
 - Node ID is always **111** (single-node, stateless design - this is intentional)
-- Group coordination in `tansu-broker/src/coordinator/group/`
+- Group coordination in `jansu-broker/src/coordinator/group/`
 - `EnvVarExp<T>` wrapper allows CLI args with `${VAR}` references expanded at parse time
 - All `Error` types implement `Clone` (non-Clone errors wrapped in `Arc`)
 
@@ -101,7 +107,7 @@ Lake features: `parquet`, `iceberg`, `delta` - enable writing schema-backed topi
 - Test logs go to `logs/<crate-name>/` (one file per test thread, dirs must exist)
 - Integration tests require external services started via `just ci`
 - Tests load `.env` via `dotenv().ok()`
-- Tests in `tansu-broker` run against multiple backends: InMemory, Lite (libSQL), Postgres, SlateDb
+- Tests in `jansu-broker` run against multiple backends: InMemory, Lite (libSQL), Postgres, SlateDb
 - Tests with specific feature requirements use `required-features` in their `Cargo.toml`
 
 ## CI Pipeline
@@ -117,8 +123,8 @@ GitHub Actions (`.github/workflows/ci.yml`): check -> fmt -> clippy -> build-sto
 | `compose.yaml` | Docker Compose: postgres, minio, grafana, jaeger, prometheus, lakehouse |
 | `etc/initdb.d/010-schema.sql` | PostgreSQL schema DDL |
 | `etc/schema/` | Sample schemas: `.avsc` (Avro), `.json` (JSON Schema), `.proto` (Protobuf) |
-| `tansu-sans-io/message/` | Kafka JSON protocol descriptors (upstream, ~185 files) |
-| `tansu-sans-io/build.rs` | Code generator: JSON descriptors -> Rust types |
+| `jansu-sans-io/message/` | Kafka JSON protocol descriptors (upstream, ~185 files) |
+| `jansu-sans-io/build.rs` | Code generator: JSON descriptors -> Rust types |
 
 ## Lint Configuration
 

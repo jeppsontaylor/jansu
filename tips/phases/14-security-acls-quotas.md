@@ -9,12 +9,12 @@ Can run with: Phase 05, Phase 07, Phase 08, Phase 09, Phase 10, Phase 11, and Ph
 Goal: Finish TLS/mTLS listener handling, SASL/SCRAM, ACL enforcement on every API, quotas, throttling, and audit visibility.
 
 Current code anchors:
-- `tansu-broker/src/service/auth.rs` routes SASL handshake and authenticate flows.
-- `tansu-auth/` owns authentication implementation details.
-- `tansu-storage/src/service/create_acls.rs`, `describe_acls.rs`, `alter_user_scram_credentials.rs`, and `describe_user_scram_credentials.rs` cover ACL/SCRAM admin surfaces.
+- `jansu-broker/src/service/auth.rs` routes SASL handshake and authenticate flows.
+- `jansu-auth/` owns authentication implementation details.
+- `jansu-storage/src/service/create_acls.rs`, `describe_acls.rs`, `alter_user_scram_credentials.rs`, and `describe_user_scram_credentials.rs` cover ACL/SCRAM admin surfaces.
 - `command-plain.properties`, `command-scram-256.properties`, `command-scram-512.properties`, `jaas-plain.conf`, and `jaas-scram.conf` support manual client testing.
-- `tansu-broker/tests/auth.rs` covers current auth behavior.
-- `tansu-storage/src/proxy.rs` and OpenTelemetry metrics provide hooks for quotas and throttling.
+- `jansu-broker/tests/auth.rs` covers current auth behavior.
+- `jansu-storage/src/proxy.rs` and OpenTelemetry metrics provide hooks for quotas and throttling.
 
 Implementation steps:
 - Complete TLS and mTLS listener handling before Kafka protocol requests are processed on SSL listeners.

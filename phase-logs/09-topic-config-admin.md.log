@@ -1,0 +1,38 @@
+# Phase 09 - Topic Config Admin Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/09-topic-config-admin.md`
+
+## Intent
+
+- Track topic configuration and admin API compatibility work.
+
+## Files Touched
+
+- `tips/phases/09-topic-config-admin.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future Phase 09 attempts.
+
+## Residual Risks
+
+- Admin API semantics remain uncertified until phase work supplies proof.

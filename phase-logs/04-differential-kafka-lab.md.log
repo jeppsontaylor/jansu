@@ -1,0 +1,38 @@
+# Phase 04 - Differential Kafka Lab Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/04-differential-kafka-lab.md`
+
+## Intent
+
+- Track differential Kafka lab work needed to prove behavior against Kafka 4.2.
+
+## Files Touched
+
+- `tips/phases/04-differential-kafka-lab.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future differential harness attempts.
+
+## Residual Risks
+
+- Full differential certification is blocked until the harness and client matrix exist.

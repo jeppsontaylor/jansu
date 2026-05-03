@@ -1,0 +1,56 @@
+[package]
+name = "jansu-cli"
+description = "Jansu CLI"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+include.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+delta = []
+dynostore = []
+iceberg = []
+libsql = []
+parquet = []
+postgres = []
+slatedb = []
+turso = []
+
+[dependencies]
+bytes.workspace = true
+clap.workspace = true
+console.workspace = true
+dotenv.workspace = true
+human-units.workspace = true
+humantime.workspace = true
+owo-colors.workspace = true
+pbkdf2.workspace = true
+rand.workspace = true
+regex.workspace = true
+rsasl.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+jansu-broker.workspace = true
+jansu-cat.workspace = true
+jansu-client.workspace = true
+jansu-generator.workspace = true
+jansu-perf.workspace = true
+jansu-proxy.workspace = true
+jansu-sans-io.workspace = true
+jansu-schema.workspace = true
+jansu-storage.workspace = true
+jansu-topic.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true

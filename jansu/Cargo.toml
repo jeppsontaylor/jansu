@@ -1,0 +1,40 @@
+[package]
+name = "jansu"
+description = "Apache Kafka compatible broker with S3, PostgreSQL, Apache Iceberg and Delta Lake"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+include.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dotenv.workspace = true
+jansu-broker = { workspace = true, default-features = false, optional = true }
+jansu-cat.workspace = true
+jansu-cli = { workspace = true, default-features = false, optional = true }
+jansu-generator.workspace = true
+jansu-perf.workspace = true
+jansu-proxy.workspace = true
+jansu-sans-io.workspace = true
+jansu-schema = { workspace = true, default-features = false, optional = true }
+jansu-storage = { workspace = true, default-features = false, optional = true }
+jansu-topic.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[features]
+default = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage"]
+delta = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-cli/delta", "jansu-schema/delta"]
+dynostore = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-broker/dynostore", "jansu-cli/dynostore", "jansu-storage/dynostore"]
+iceberg = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-cli/iceberg", "jansu-schema/iceberg"]
+libsql = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-broker/libsql", "jansu-cli/libsql", "jansu-storage/libsql"]
+parquet = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-cli/parquet", "jansu-schema/parquet"]
+postgres = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-broker/postgres", "jansu-cli/postgres", "jansu-storage/postgres"]
+slatedb = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-broker/slatedb", "jansu-cli/slatedb", "jansu-storage/slatedb"]
+turso = ["dep:jansu-broker", "dep:jansu-cli", "dep:jansu-schema", "dep:jansu-storage", "jansu-broker/turso", "jansu-cli/turso", "jansu-storage/turso"]

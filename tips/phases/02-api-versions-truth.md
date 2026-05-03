@@ -6,15 +6,15 @@ Depends on: Phase 01 - Compatibility Contract
 
 Can run with: none while the compatibility contract and ApiVersions enforcement are being changed. Later route work depends on this gate.
 
-Goal: Replace descriptor-derived ApiVersions advertising with explicit implemented, tested, and advertised version caps. Unsupported versions and unsupported APIs must return Kafka-compatible errors instead of causing clients to select paths Tansu cannot honor.
+Goal: Replace descriptor-derived ApiVersions advertising with explicit implemented, tested, and advertised version caps. Unsupported versions and unsupported APIs must return Kafka-compatible errors instead of causing clients to select paths Jansu cannot honor.
 
 Current code anchors:
-- `tansu-service/src/api.rs` has `ApiVersionsService` returning `RootMessageMeta` min/max versions for every supported route key.
-- `tansu-service/src/api.rs` has `FrameRouteBuilder::with_route` and `with_api_versions` where route registration and advertised APIs meet.
-- `tansu-sans-io/src/lib.rs` exposes `RootMessageMeta::messages()` and descriptor version ranges.
-- `tansu-service/src/frame.rs` decodes request versions from frames and is the right place to preserve requested-version context.
-- `tansu-broker/src/service/storage.rs`, `tansu-broker/src/service/coordinator.rs`, and `tansu-broker/src/service/auth.rs` register routed APIs.
-- `tansu-broker/src/broker.rs` already inspects protocol metadata for broker-visible behavior.
+- `jansu-service/src/api.rs` has `ApiVersionsService` returning `RootMessageMeta` min/max versions for every supported route key.
+- `jansu-service/src/api.rs` has `FrameRouteBuilder::with_route` and `with_api_versions` where route registration and advertised APIs meet.
+- `jansu-sans-io/src/lib.rs` exposes `RootMessageMeta::messages()` and descriptor version ranges.
+- `jansu-service/src/frame.rs` decodes request versions from frames and is the right place to preserve requested-version context.
+- `jansu-broker/src/service/storage.rs`, `jansu-broker/src/service/coordinator.rs`, and `jansu-broker/src/service/auth.rs` register routed APIs.
+- `jansu-broker/src/broker.rs` already inspects protocol metadata for broker-visible behavior.
 
 Implementation steps:
 - Introduce an explicit compatibility registry, for example `ApiSupport { api_key, implemented, tested, advertised, notes }`, loaded from code or generated from the Phase 01 ledger.
@@ -41,4 +41,4 @@ Do not do:
 - Do not hide unsupported behavior by closing the connection when Kafka would return a structured error.
 - Do not route `OffsetForLeaderEpochRequest::KEY` until leader-epoch history, fencing, and errors are implemented.
 
-Fresh session handoff: Start in `tansu-service/src/api.rs`. Separate route registration from ApiVersions advertisement, add the smallest registry shape that can satisfy Phase 01, and prove it with tests before changing any feature service.
+Fresh session handoff: Start in `jansu-service/src/api.rs`. Separate route registration from ApiVersions advertisement, add the smallest registry shape that can satisfy Phase 01, and prove it with tests before changing any feature service.

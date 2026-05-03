@@ -23,9 +23,9 @@ Work completed:
 - Removed temporary debug output from the broker contract test after verification.
 
 Verification:
-- `rtk cargo test -p tansu-broker --test compatibility_contract --all-features -- --nocapture`
-- `rtk cargo test -p tansu-service route --all-features -- --nocapture`
-- `rtk cargo check -p tansu-service -p tansu-broker --all-features --all-targets`
+- `rtk cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `rtk cargo test -p jansu-service route --all-features -- --nocapture`
+- `rtk cargo check -p jansu-service -p jansu-broker --all-features --all-targets`
 - `rtk cargo fmt --all --check`
 - `rtk git diff --check`
 

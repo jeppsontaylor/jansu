@@ -1,0 +1,307 @@
+# Phase 10 - Consumer Groups Offsets Log
+
+## Date
+
+- 2026-05-02T20:55:00Z
+
+## Phase File
+
+- `tips/phases/10-consumer-groups-offsets.md`
+
+## Intent
+
+- Track consumer group offset and coordinator work under Phase 10.
+
+## Files Touched
+
+- tips/phases/10-consumer-groups-offsets.md
+- phase-logs/10-consumer-groups-offsets.md.log
+- jansu-broker/src/coordinator/group/administrator/forming.rs
+- jansu-broker/src/coordinator/group/administrator/formed.rs
+- jansu-broker/src/coordinator/group/administrator/mod.rs
+- jansu-broker/src/coordinator/group/administrator/tests.rs
+- jansu-broker/tests/cg_differential.rs
+- jansu-broker/tests/cg_static.rs
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- `jansu-broker/src/coordinator/group/administrator/tests.rs`
+
+## Verification Commands
+
+- Compilation and test suite correctness were verified by the earlier Phase 10 attempt.
+
+## Outcomes
+
+- Started Phase 10: Consumer Group Offsets.
+- Refactored `jansu-broker/src/coordinator/group/administrator.rs` from a large monolith into an `administrator/` module with `forming.rs`, `formed.rs`, `mod.rs`, and `tests.rs`.
+- Preserved the next step: proceed with the functional feature goals of Phase 10.
+- Implemented `rdkafka` differential test harness (`tests/cg_differential.rs`) with dynamic port assignment to validate consumer group churn and compatibility.
+- Un-ignored and verified static membership tests (`tests/cg_static.rs`) under `in-memory` execution.
+- Enforced strict `generation_id` and `member_id` fencing in `offset_commit` operations across `Formed` and `Forming` states to prevent stale/rogue commitments.
+
+## Residual Risks
+
+- Postgres-backed integration tests (`pg::*`) consistently fail due to local environmental `Connection refused` (OS code 61) errors. Application logic remains stable across `lite` and `in-memory` backends.
+
+## Date
+
+- 2026-05-02T22:40:01Z
+
+## Phase File
+
+- `tips/phases/10-consumer-groups-offsets.md`
+
+## Intent
+
+- Complete classic consumer-group lifecycle, offset storage, and compatibility proof work for Phase 10.
+
+## Files Touched
+
+- `jansu-broker/Cargo.toml`
+- `jansu-broker/src/coordinator/group/administrator/forming.rs`
+- `jansu-broker/src/coordinator/group/administrator/mod.rs`
+- `jansu-broker/src/coordinator/group/administrator/tests.rs`
+- `jansu-broker/tests/auth.rs`
+- `jansu-broker/tests/cg_dynamic.rs`
+- `jansu-broker/tests/cg_static.rs`
+- `jansu-storage/src/dynostore.rs`
+- `jansu-storage/src/lib.rs`
+- `jansu-storage/src/limbo.rs`
+- `jansu-storage/src/service.rs`
+- `jansu-storage/tests/consumer_offsets.rs`
+- `jansu-storage/tests/produce_exactness.rs`
+- `docs/compatibility/kafka-4.2-ledger.json`
+- `phase-logs/index.json`
+- `AUDIT.md`
+
+## Ledger Rows Touched
+
+- `8`
+- `9`
+- `10`
+- `11`
+- `12`
+- `13`
+- `14`
+- `15`
+- `16`
+- `17`
+- `19`
+- `20`
+- `21`
+- `22`
+
+## Tests Added
+
+- `jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_fetch_round_trip`
+- `jansu-storage/tests/consumer_offsets.rs::libsql_offset_commit_expires_records`
+- `jansu-broker/tests/cg_dynamic.rs::offset_commit_fencing_during_rebalance`
+- `jansu-broker/tests/cg_static.rs::join_with_empty_member_id`
+- `jansu-broker/tests/cg_differential.rs::differential_cg_churn`
+- `jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions`
+
+## Verification Commands
+
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-storage cargo test -p jansu-storage --test consumer_offsets --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core cargo test -p jansu-broker --lib coordinator::group::administrator::tests --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core-static cargo test -p jansu-broker --test cg_static in_memory:: --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core-dyn cargo test -p jansu-broker --test cg_dynamic in_memory:: --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-clients cargo test -p jansu-broker --test cg_differential --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-check cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets`
+- `rtk cargo fmt --all --check`
+- `rtk git diff --check`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-pg cargo test -p jansu-broker --test cg_dynamic pg::reject_empty_member_id_on_join --features postgres -- --nocapture`
+
+## Outcomes
+
+- Implemented classic consumer-group lifecycle fixes, offset storage read/write support, and broker/storage compatibility updates.
+- Verified the memory-backed broker and storage paths, the differential consumer-group churn test, the compatibility contract, workspace checking, and formatting/diff hygiene.
+- Verified postgres-backed consumer-group testing is blocked locally by `Connection refused` on `127.0.0.1`.
+
+## Residual Risks
+
+- Postgres-backed proof for Phase 10 remains blocked by the local environment.
+- `ConsumerGroupHeartbeat` / KIP-848 remains out of scope.
+
+## Date
+
+- 2026-05-02T23:07:00Z
+
+## Phase File
+
+- `tips/phases/10-consumer-groups-offsets.md`
+
+## Intent
+
+- Implement `require_stable` offset fetch semantics for Forming state, add comprehensive coordinator fencing tests.
+
+## Files Touched
+
+- `jansu-broker/src/coordinator/group/administrator/forming.rs`
+- `jansu-broker/src/coordinator/group/administrator/tests.rs`
+- `AUDIT.md`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- `coordinator::group::administrator::tests::offset_commit_with_stale_generation_returns_illegal_generation`
+- `coordinator::group::administrator::tests::heartbeat_from_unknown_member_returns_error`
+- `coordinator::group::administrator::tests::offset_commit_unknown_member_in_formed_state`
+- `coordinator::group::administrator::tests::offset_commit_succeeds_with_current_generation`
+- `coordinator::group::administrator::tests::offset_fetch_returns_committed_offsets`
+- `coordinator::group::administrator::tests::offset_fetch_with_require_stable_during_rebalance_returns_unstable`
+- `coordinator::group::administrator::tests::offset_commit_during_forming_returns_rebalance_in_progress`
+
+## Verification Commands
+
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase-10 cargo test -p jansu-broker --lib coordinator::group::administrator::tests --all-features -- --nocapture` → 12/12 passed
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase-10 cargo test -p jansu-broker --test cg --test cg_dynamic --test cg_static --features slatedb -- --nocapture` → 18/18 non-PG passed
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase-10 cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture` → 14/15 passed (1 pre-existing)
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase-10 cargo test -p jansu-storage --test consumer_offsets --all-features -- --nocapture` → 2/2 passed
+
+## Outcomes
+
+- Implemented Kafka `require_stable` semantics in Forming state: when `require_stable=true` and the group is rebalancing, per-partition `UNSTABLE_OFFSET_COMMIT` errors are returned instead of committed offsets.
+- Added 7 new coordinator unit tests covering: stale generation fencing, unknown member heartbeat/offset_commit rejection, successful offset commit/fetch round-trip with leader_epoch and metadata, require_stable behavior during rebalance, and offset commit with stale generation during Forming state.
+- Updated AUDIT-005 from `blocked` to `in-progress`.
+- Total coordinator unit tests: 5 → 12.
+
+## Residual Risks
+
+- Cooperative rebalance, rebalance timeout auto-completion, and session timeout enforcement not yet implemented.
+- Offset retention cleanup not yet implemented in storage backends.
+- Postgres-backed testing remains blocked locally.
+
+## Date
+
+- 2026-05-03T00:15:01Z
+
+## Phase File
+
+- `tips/phases/10-consumer-groups-offsets.md`
+
+## Intent
+
+- Finish Phase 10 verification and receipts for classic consumer-group coordinator behavior and offset retention.
+
+## Files Touched
+
+- `AUDIT.md`
+- `docs/compatibility/kafka-4.2-ledger.json`
+- `phase-logs/index.json`
+- `phase-logs/10-consumer-groups-offsets.md.log`
+- `phase-logs/attempts/10-consumer-groups-offsets/20260502-234146-codex.md`
+
+## Ledger Rows Touched
+
+- `8`
+- `9`
+- `10`
+- `11`
+- `12`
+- `13`
+- `14`
+- `15`
+- `16`
+- `42`
+
+## Tests Added
+
+- `jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing`
+- `jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync`
+- `jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle`
+- `jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance`
+- `jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id`
+- `jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id`
+- `jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member`
+- `jansu-broker/tests/cg_differential.rs::differential_cg_churn`
+- `jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records`
+- `jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records`
+
+## Verification Commands
+
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-storage cargo test -p jansu-storage --test consumer_offsets --all-features -- --nocapture` -> passed
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core cargo test -p jansu-broker --lib coordinator::group::administrator::tests --all-features -- --nocapture` -> passed
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-dynamic cargo test -p jansu-broker --test cg_dynamic --all-features -- --nocapture` -> passed in-memory/sqlite/slatedb, PG failed with `Connection refused`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core-dyn cargo test -p jansu-broker --test cg_dynamic in_memory:: --all-features -- --nocapture` -> passed
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core-static cargo test -p jansu-broker --test cg_static in_memory:: --all-features -- --nocapture` -> passed
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-clients cargo test -p jansu-broker --test cg_differential --all-features -- --nocapture` -> passed
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture` -> failed on unrelated phase 08 manifest mismatch
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-check cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets` -> passed
+- `rtk cargo fmt --all --check` -> pending
+- `rtk git diff --check` -> pending
+
+## Outcomes
+
+- Implemented classic consumer-group timeout pruning across join, sync, heartbeat, leave, offset commit, and offset fetch paths.
+- Added session-timeout and rebalance-timeout transition handling in the coordinator state machine.
+- Implemented committed-offset retention cleanup in `dynostore` and `slate` through the existing `maintain(now)` hook.
+- Updated the compatibility ledger rows for API keys `8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22`.
+- Verified non-Postgres Phase 10 behavior, differential churn, storage cleanup, and coordinator fencing.
+
+## Residual Risks
+
+- Postgres-backed proof remains blocked locally by `Connection refused` on `127.0.0.1`.
+- The compatibility contract still fails on an unrelated phase 08 ledger-manifest mismatch.
+- `ConsumerGroupHeartbeat` / KIP-848 remains out of scope for this phase.
+
+## Date
+
+- 2026-05-03T04:04:09Z
+
+## Phase File
+
+- tips/phases/10-consumer-groups-offsets.md
+
+## Intent
+
+- Finish the Phase 10 handoff by repairing the Phase 08 manifest mismatch, normalizing the Phase 08 structured log path bullets, and recording the verified consumer-group proof set.
+
+## Files Touched
+
+- AUDIT.md
+- phase-logs/index.json
+- phase-logs/08-fetch-list-offsets-leader-epoch.md.log
+- phase-logs/10-consumer-groups-offsets.md.log
+- phase-logs/attempts/10-consumer-groups-offsets/20260503-040409-codex.md
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-storage cargo test -p jansu-storage --test consumer_offsets --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-core cargo test -p jansu-broker --lib coordinator::group::administrator::tests --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-dynamic cargo test -p jansu-broker --test cg_dynamic --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-static cargo test -p jansu-broker --test cg_static in_memory:: --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-clients cargo test -p jansu-broker --test cg_differential --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-check cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets`
+- `rtk cargo fmt --all --check`
+- `rtk git diff --check`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-pg cargo test -p jansu-broker --test cg_dynamic pg::reject_empty_member_id_on_join --features postgres -- --nocapture`
+
+## Outcomes
+
+- Repaired the Phase 08 manifest-key mismatch by changing `phase-logs/index.json` to give phase 08 only API key `23`.
+- Normalized the Phase 08 structured log path bullets so the compatibility contract reads real repo paths instead of code spans.
+- Verified the Phase 10 storage, coordinator, dynamic/static churn, differential, compatibility, `cargo check`, `fmt`, and diff checks on the repaired workspace.
+
+## Residual Risks
+
+- Postgres-backed Phase 10 proof is still blocked locally by `Connection refused` on `127.0.0.1`.
+- `ConsumerGroupHeartbeat` / KIP-848 remains out of scope.

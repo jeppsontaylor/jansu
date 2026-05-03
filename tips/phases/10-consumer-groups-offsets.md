@@ -9,11 +9,11 @@ Can run with: Phase 07, Phase 08, Phase 09, Phase 13, and Phase 14 after request
 Goal: Complete committed offsets and classic consumer group coordinator behavior under churn, static membership, cooperative rebalance, and offset retention.
 
 Current code anchors:
-- `tansu-broker/src/service/coordinator.rs` routes JoinGroup, SyncGroup, Heartbeat, LeaveGroup, OffsetCommit, and OffsetFetch.
-- `tansu-storage/src/service.rs` includes group and offset request/response types plus `UpdateGroup` and offset commit/fetch requests.
-- `tansu-storage/src/lib.rs` exposes group detail, named group detail, committed offsets, and group update methods.
-- `tansu-broker/tests/cg.rs`, `cg_dynamic.rs`, `cg_static.rs`, and `auth.rs` cover current group and auth interactions.
-- `tansu-broker/tests/common/` has shared broker/storage test helpers.
+- `jansu-broker/src/service/coordinator.rs` routes JoinGroup, SyncGroup, Heartbeat, LeaveGroup, OffsetCommit, and OffsetFetch.
+- `jansu-storage/src/service.rs` includes group and offset request/response types plus `UpdateGroup` and offset commit/fetch requests.
+- `jansu-storage/src/lib.rs` exposes group detail, named group detail, committed offsets, and group update methods.
+- `jansu-broker/tests/cg.rs`, `cg_dynamic.rs`, `cg_static.rs`, and `auth.rs` cover current group and auth interactions.
+- `jansu-broker/tests/common/` has shared broker/storage test helpers.
 
 Implementation steps:
 - Define advertised caps for classic group APIs based on actual coordinator semantics.
