@@ -9,11 +9,11 @@ Can run with: Phase 07, Phase 09, Phase 10, Phase 13, and Phase 14 after storage
 Goal: Make Fetch, ListOffsets, and OffsetForLeaderEpoch exact, including timestamp lookups, log start offsets, high watermark, last stable offset, leader epoch history, and fencing. API 23 must not be advertised until these semantics exist.
 
 Current code anchors:
-- `tansu-storage/src/service/fetch.rs` handles Fetch, high watermark, last stable offset, log start offset, and empty responses.
-- `tansu-storage/src/service/list_offsets.rs` handles ListOffsets and currently returns a fixed leader epoch value.
-- `tansu-storage/src/lib.rs` exposes `offset_stage`, `fetch`, and `list_offsets`.
-- `tansu-storage/src/sql/list_latest_offset_*.sql` contains SQL offset query assets.
-- `tansu-broker/tests/fetch.rs` and `tansu-broker/tests/list_offsets.rs` cover current behavior.
+- `jansu-storage/src/service/fetch.rs` handles Fetch, high watermark, last stable offset, log start offset, and empty responses.
+- `jansu-storage/src/service/list_offsets.rs` handles ListOffsets and currently returns a fixed leader epoch value.
+- `jansu-storage/src/lib.rs` exposes `offset_stage`, `fetch`, and `list_offsets`.
+- `jansu-storage/src/sql/list_latest_offset_*.sql` contains SQL offset query assets.
+- `jansu-broker/tests/fetch.rs` and `jansu-broker/tests/list_offsets.rs` cover current behavior.
 - The reverted `OffsetForLeaderEpoch` service showed a useful starting concept but was unsafe because it lacked leader-epoch history and truthful ApiVersions.
 
 Implementation steps:

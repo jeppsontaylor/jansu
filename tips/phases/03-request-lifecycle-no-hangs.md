@@ -9,13 +9,13 @@ Can run with: none while request lifecycle invariants are being introduced. Late
 Goal: Enforce the invariant that every accepted request responds, closes, or is cancelled. Fetch long polls and storage waits must be bounded, cancellable, and observable so no Kafka client sees silent hangs.
 
 Current code anchors:
-- `tansu-service/src/frame.rs` owns Kafka frame request/response decode and encode.
-- `tansu-service/src/api.rs` dispatches frames through `FrameRouteService`.
-- `tansu-broker/src/broker.rs` owns listener setup and connection handling.
-- `tansu-storage/src/service/fetch.rs` loops over storage fetches and currently sleeps around `max_wait_ms`.
-- `tansu-storage/src/service.rs` has `RequestChannelService`, `RequestStorageService`, and `CancellationToken` usage.
-- `tansu-storage/src/proxy.rs` wraps storage calls and metrics.
-- `tansu-broker/tests/fetch.rs` and `tansu-broker/tests/produce_fetch.rs` cover common fetch paths.
+- `jansu-service/src/frame.rs` owns Kafka frame request/response decode and encode.
+- `jansu-service/src/api.rs` dispatches frames through `FrameRouteService`.
+- `jansu-broker/src/broker.rs` owns listener setup and connection handling.
+- `jansu-storage/src/service/fetch.rs` loops over storage fetches and currently sleeps around `max_wait_ms`.
+- `jansu-storage/src/service.rs` has `RequestChannelService`, `RequestStorageService`, and `CancellationToken` usage.
+- `jansu-storage/src/proxy.rs` wraps storage calls and metrics.
+- `jansu-broker/tests/fetch.rs` and `jansu-broker/tests/produce_fetch.rs` cover common fetch paths.
 
 Implementation steps:
 - Add a request lifecycle model with explicit states: accepted, dispatched, responded, closed, cancelled, timed out.

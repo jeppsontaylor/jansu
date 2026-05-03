@@ -9,11 +9,11 @@ Can run with: Phase 07, Phase 09, Phase 10, Phase 11, and Phase 14 after log-sta
 Goal: Implement retention, compaction, DeleteRecords, tombstones, cleanup policy combinations, log-start movement, and background cleaner behavior across certified engines.
 
 Current code anchors:
-- `tansu-storage/src/service/delete_records.rs` and `tansu-broker/src/service/storage.rs` route DeleteRecords.
-- `tansu-broker/tests/policy_compact_delete.rs` is the main existing policy test surface.
-- `tansu-storage/src/pg.rs`, `lite.rs`, `dynostore.rs`, `slate/storage.rs`, and `limbo.rs` each own engine-specific cleanup behavior.
-- `tansu-storage/src/lib.rs` includes topic configs, offset stages, list offsets, and maintenance hooks.
-- `tansu-storage/src/service.rs` has a `Maintain(SystemTime)` request shape.
+- `jansu-storage/src/service/delete_records.rs` and `jansu-broker/src/service/storage.rs` route DeleteRecords.
+- `jansu-broker/tests/policy_compact_delete.rs` is the main existing policy test surface.
+- `jansu-storage/src/pg.rs`, `lite.rs`, `dynostore.rs`, `slate/storage.rs`, and `limbo.rs` each own engine-specific cleanup behavior.
+- `jansu-storage/src/lib.rs` includes topic configs, offset stages, list offsets, and maintenance hooks.
+- `jansu-storage/src/service.rs` has a `Maintain(SystemTime)` request shape.
 
 Implementation steps:
 - Define retention and compaction semantics in the Phase 06 log contract, including log start offset movement and timestamp boundaries.

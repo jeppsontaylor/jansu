@@ -1,0 +1,38 @@
+# Phase 16 - Ecosystem, Performance, Ops, Migration Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/16-ecosystem-performance-ops-migration.md`
+
+## Intent
+
+- Track ecosystem client proof, performance, operations, and migration work.
+
+## Files Touched
+
+- `tips/phases/16-ecosystem-performance-ops-migration.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future Phase 16 attempts.
+
+## Residual Risks
+
+- Ecosystem, performance, and migration claims need durable proof before public compatibility claims.

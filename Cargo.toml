@@ -2,32 +2,32 @@
 resolver = "3"
 members = [
     "fuzz",
-    "tansu",
-    "tansu",
-    "tansu-auth",
-    "tansu-broker",
-    "tansu-cat",
-    "tansu-cli",
-    "tansu-client",
-    "tansu-generator",
-    "tansu-model",
-    "tansu-otel", "tansu-perf",
-    "tansu-proxy",
-    "tansu-sans-io",
-    "tansu-schema",
-    "tansu-service",
-    "tansu-storage",
-    "tansu-topic",
+    "jansu",
+    "jansu",
+    "jansu-auth",
+    "jansu-broker",
+    "jansu-cat",
+    "jansu-cli",
+    "jansu-client",
+    "jansu-generator",
+    "jansu-model",
+    "jansu-otel", "jansu-perf",
+    "jansu-proxy",
+    "jansu-sans-io",
+    "jansu-schema",
+    "jansu-service",
+    "jansu-storage",
+    "jansu-topic",
 ]
 
 [workspace.package]
 edition = "2024"
 version = "0.6.0"
 license = "Apache-2.0"
-homepage = "https://tansu.io"
-repository = "https://github.com/tansu-io/tansu"
+homepage = "https://jansu.io"
+repository = "https://github.com/jansu-io/jansu"
 keywords = ["deltalake", "iceberg", "kafka", "postgres", "s3"]
-authors = ["Peter Morgan <peter.morgan@tansu.io>"]
+authors = ["Peter Morgan <peter.morgan@jansu.io>"]
 include = [
     "Cargo.toml",
     "LICENSE",
@@ -147,22 +147,22 @@ sha2 = "0.10.9"
 slatedb = "0.10.1"
 snap = "1.1.1"
 syn = { version = "2.0", features = ["full"] }
-tansu = { version = "0.6.0", path = "tansu", default-features = false }
-tansu-auth = { version = "0.6.0", path = "tansu-auth", default-features = false }
-tansu-broker = { version = "0.6.0", path = "tansu-broker", default-features = false }
-tansu-cat = { version = "0.6.0", path = "tansu-cat", default-features = false }
-tansu-cli = { version = "0.6.0", path = "tansu-cli", default-features = false }
-tansu-client = { version = "0.6.0", path = "tansu-client", default-features = false }
-tansu-generator = { version = "0.6.0", path = "tansu-generator", default-features = false }
-tansu-model = { version = "0.6.0", path = "tansu-model", default-features = false }
-tansu-otel = { version = "0.6.0", path = "tansu-otel", default-features = false }
-tansu-perf = { version = "0.6.0", path = "tansu-perf", default-features = false }
-tansu-proxy = { version = "0.6.0", path = "tansu-proxy", default-features = false }
-tansu-sans-io = { version = "0.6.0", path = "tansu-sans-io", default-features = false }
-tansu-schema = { version = "0.6.0", path = "tansu-schema", default-features = false }
-tansu-service = { version = "0.6.0", path = "tansu-service", default-features = false }
-tansu-storage = { version = "0.6.0", path = "tansu-storage", default-features = false }
-tansu-topic = { version = "0.6.0", path = "tansu-topic", default-features = false }
+jansu = { version = "0.6.0", path = "jansu", default-features = false }
+jansu-auth = { version = "0.6.0", path = "jansu-auth", default-features = false }
+jansu-broker = { version = "0.6.0", path = "jansu-broker", default-features = false }
+jansu-cat = { version = "0.6.0", path = "jansu-cat", default-features = false }
+jansu-cli = { version = "0.6.0", path = "jansu-cli", default-features = false }
+jansu-client = { version = "0.6.0", path = "jansu-client", default-features = false }
+jansu-generator = { version = "0.6.0", path = "jansu-generator", default-features = false }
+jansu-model = { version = "0.6.0", path = "jansu-model", default-features = false }
+jansu-otel = { version = "0.6.0", path = "jansu-otel", default-features = false }
+jansu-perf = { version = "0.6.0", path = "jansu-perf", default-features = false }
+jansu-proxy = { version = "0.6.0", path = "jansu-proxy", default-features = false }
+jansu-sans-io = { version = "0.6.0", path = "jansu-sans-io", default-features = false }
+jansu-schema = { version = "0.6.0", path = "jansu-schema", default-features = false }
+jansu-service = { version = "0.6.0", path = "jansu-service", default-features = false }
+jansu-storage = { version = "0.6.0", path = "jansu-storage", default-features = false }
+jansu-topic = { version = "0.6.0", path = "jansu-topic", default-features = false }
 tempfile = "3"
 thiserror = "2.0"
 time = { version = "0.3.47", features = ["formatting", "macros"] }

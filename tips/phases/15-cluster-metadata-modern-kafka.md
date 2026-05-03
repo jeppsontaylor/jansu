@@ -10,17 +10,17 @@ Goal: Build a cluster metadata and controller facade with real broker IDs, leade
 
 Current code anchors:
 - `README.md` documents the current simplification that all brokers appear as node 111 in examples.
-- `tansu-broker/src/broker.rs` registers brokers and owns listener identity.
-- `tansu-storage/src/lib.rs` exposes broker registration, cluster ID, node, advertised listener, metadata, and group/transaction state.
-- `tansu-storage/src/service/metadata.rs`, `describe_cluster.rs`, `describe_topic_partitions.rs`, and `list_partition_reassignments.rs` expose cluster metadata to clients.
-- `tansu-broker/tests/metadata.rs` and `describe_cluster.rs` verify current metadata shape.
-- `tansu-sans-io` includes Kafka 4.2 APIs such as ConsumerGroupHeartbeat, share-group APIs, streams-group APIs, telemetry, and feature APIs.
+- `jansu-broker/src/broker.rs` registers brokers and owns listener identity.
+- `jansu-storage/src/lib.rs` exposes broker registration, cluster ID, node, advertised listener, metadata, and group/transaction state.
+- `jansu-storage/src/service/metadata.rs`, `describe_cluster.rs`, `describe_topic_partitions.rs`, and `list_partition_reassignments.rs` expose cluster metadata to clients.
+- `jansu-broker/tests/metadata.rs` and `describe_cluster.rs` verify current metadata shape.
+- `jansu-sans-io` includes Kafka 4.2 APIs such as ConsumerGroupHeartbeat, share-group APIs, streams-group APIs, telemetry, and feature APIs.
 
 Implementation steps:
-- Define the Kafka-visible cluster facade for stateless Tansu brokers: stable broker IDs, controller ID, rack, listener names, advertised listeners, broker liveness, leader identity, ISR-like fields, leader epoch, and partition availability.
+- Define the Kafka-visible cluster facade for stateless Jansu brokers: stable broker IDs, controller ID, rack, listener names, advertised listeners, broker liveness, leader identity, ISR-like fields, leader epoch, and partition availability.
 - Decide how replication factor, min.insync.replicas, acks=all, reassignment, and leader election map to storage-backed durability profiles.
 - Implement metadata refresh behavior and errors such as leader not available, not leader or follower, fenced leader epoch, and unknown topic/partition with Kafka timing.
-- Complete DescribeCluster, Metadata, DescribeTopicPartitions, partition reassignment, and broker registration behavior for multi-broker Tansu.
+- Complete DescribeCluster, Metadata, DescribeTopicPartitions, partition reassignment, and broker registration behavior for multi-broker Jansu.
 - Decide and implement targeted Kafka 4.2 modern APIs: ConsumerGroupHeartbeat, ShareFetch, ShareAcknowledge, ShareGroupHeartbeat, ShareGroupDescribe, StreamsGroupHeartbeat, StreamsGroupDescribe, telemetry PushTelemetry, and UpdateFeatures.
 - Keep non-targeted broker-internal KRaft APIs explicitly unsupported or safe-error routed.
 
@@ -31,11 +31,11 @@ Tests:
 - Add share group and streams group differential tests only when those profiles are enabled.
 - Add chaos tests around broker liveness and metadata changes without storage corruption.
 
-Acceptance gate: Multi-broker Tansu is Kafka-shaped to clients and AdminClient, with stable metadata, honest modern API support, and profile-specific behavior documented in the compatibility ledger.
+Acceptance gate: Multi-broker Jansu is Kafka-shaped to clients and AdminClient, with stable metadata, honest modern API support, and profile-specific behavior documented in the compatibility ledger.
 
 Do not do:
 - Do not expose all brokers as node 111 in a production parity profile.
-- Do not pretend Tansu has Kafka's internal ISR/controller model unless the facade gives clients equivalent observable behavior.
+- Do not pretend Jansu has Kafka's internal ISR/controller model unless the facade gives clients equivalent observable behavior.
 - Do not advertise share groups, streams groups, or ConsumerGroupHeartbeat until the state machines are implemented and tested.
 - Do not let KRaft-internal APIs become accidental public support.
 

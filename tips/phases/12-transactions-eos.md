@@ -9,11 +9,11 @@ Can run with: none for core implementation. Measurement and client fixture prepa
 Goal: Implement Kafka exactly-once semantics: transaction coordinator, EndTxn, WriteTxnMarkers, transaction state, last stable offset, aborted index, read_committed fetches, timeout expiration, fencing, and crash recovery.
 
 Current code anchors:
-- `tansu-storage/src/service/txn/` contains AddOffsetsToTxn, AddPartitionsToTxn, and TxnOffsetCommit services.
-- `tansu-storage/src/lib.rs` includes transaction request variants and storage methods such as transaction add, commit, and end concepts.
-- `tansu-broker/src/service/storage.rs` routes transaction-adjacent APIs that already exist.
-- `tansu-broker/tests/txn.rs` and `pg_txn.rs` cover current transaction-adjacent behavior.
-- `tansu-sans-io` has generated schemas for transaction APIs including EndTxn, WriteTxnMarkers, DescribeTransactions, and ListTransactions.
+- `jansu-storage/src/service/txn/` contains AddOffsetsToTxn, AddPartitionsToTxn, and TxnOffsetCommit services.
+- `jansu-storage/src/lib.rs` includes transaction request variants and storage methods such as transaction add, commit, and end concepts.
+- `jansu-broker/src/service/storage.rs` routes transaction-adjacent APIs that already exist.
+- `jansu-broker/tests/txn.rs` and `pg_txn.rs` cover current transaction-adjacent behavior.
+- `jansu-sans-io` has generated schemas for transaction APIs including EndTxn, WriteTxnMarkers, DescribeTransactions, and ListTransactions.
 
 Implementation steps:
 - Define a transaction coordinator state model compatible with Kafka: transactional ID, producer ID, producer epoch, timeout, partitions, pending offsets, state transitions, and fencing.

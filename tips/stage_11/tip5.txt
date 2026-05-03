@@ -1,6 +1,6 @@
-Absolutely — Phase 11 is where Tansu crosses the big architectural line from “Kafka-compatible broker backed by durable storage” into “Kafka-compatible replicated log.” That is an exciting, high-leverage phase because it changes the meaning of metadata, produce acks, fetch visibility, broker identity, and recovery.
+Absolutely — Phase 11 is where Jansu crosses the big architectural line from “Kafka-compatible broker backed by durable storage” into “Kafka-compatible replicated log.” That is an exciting, high-leverage phase because it changes the meaning of metadata, produce acks, fetch visibility, broker identity, and recovery.
 
-The current repo is especially important here: Tansu’s README describes it as a **stateless Kafka-compatible broker with pluggable storage**, and the storage README currently notes that example topic descriptions show **node 111 as leader and ISR for every partition**, with “all brokers” effectively represented as node 111. That is the exact behavior Phase 11 must replace with real per-partition leader, replica, ISR, epoch, and high-watermark state. ([GitHub][1])
+The current repo is especially important here: Jansu’s README describes it as a **stateless Kafka-compatible broker with pluggable storage**, and the storage README currently notes that example topic descriptions show **node 111 as leader and ISR for every partition**, with “all brokers” effectively represented as node 111. That is the exact behavior Phase 11 must replace with real per-partition leader, replica, ISR, epoch, and high-watermark state. ([GitHub][1])
 
 Below is a very detailed implementation plan to finish **all of Phase 11**.
 
@@ -10,7 +10,7 @@ Below is a very detailed implementation plan to finish **all of Phase 11**.
 
 Phase 11 should finish with this being true:
 
-A Tansu cluster with 3 brokers can create a topic with `replication.factor=3`, elect or assign one leader per partition, replicate records from leader to followers, maintain ISR, advance high watermark only when ISR replicas have replicated, expose correct Kafka metadata, recover after broker restart, handle leader epoch changes, and truncate divergent follower logs after leader change.
+A Jansu cluster with 3 brokers can create a topic with `replication.factor=3`, elect or assign one leader per partition, replicate records from leader to followers, maintain ISR, advance high watermark only when ISR replicas have replicated, expose correct Kafka metadata, recover after broker restart, handle leader epoch changes, and truncate divergent follower logs after leader change.
 
 Kafka compatibility expectations:
 
@@ -46,7 +46,7 @@ Kafka’s Fetch protocol already distinguishes follower fetches from normal cons
 
 ## Do not implement “replication” as cosmetic metadata
 
-Tansu currently has strong storage durability options: PostgreSQL, SQLite/libSQL, S3, memory, and lake/schema integrations. But Kafka replication is not the same as “the storage backend is durable.” Kafka replication means:
+Jansu currently has strong storage durability options: PostgreSQL, SQLite/libSQL, S3, memory, and lake/schema integrations. But Kafka replication is not the same as “the storage backend is durable.” Kafka replication means:
 
 ```text
 broker 1 has a local replica log
@@ -85,19 +85,19 @@ That makes replication real: broker 2 does not “already have” broker 1’s r
 
 # Current repo map relevant to Phase 11
 
-The repo has the right layering for this. Storage services and the protocol-facing service router are already separated. The `tansu-storage/src` tree contains service modules and storage backend implementations, including `dynostore.rs`, `pg.rs`, `lite.rs`, `limbo.rs`, `sql.rs`, and the `service` directory. ([GitHub][3])
+The repo has the right layering for this. Storage services and the protocol-facing service router are already separated. The `jansu-storage/src` tree contains service modules and storage backend implementations, including `dynostore.rs`, `pg.rs`, `lite.rs`, `limbo.rs`, `sql.rs`, and the `service` directory. ([GitHub][3])
 
 The broker crate has `broker.rs`, `service.rs`, and subdirectories for broker/coordinator/service logic. ([GitHub][4])
 
-Current broker startup registers the broker through `storage.register_broker(...)`, then listens for connections. The `BrokerRegistrationRequest` currently carries broker id, cluster id, incarnation id, and rack, but not enough endpoint/liveness state for a replicated cluster. 
+Current broker startup registers the broker through `storage.register_broker(...)`, then listens for connections. The `BrokerRegistrationRequest` currently carries broker id, cluster id, incarnation id, and rack, but not enough endpoint/liveness state for a replicated cluster.
 
-Current protocol routing is clean: `tansu-broker/src/service/storage.rs` wires Kafka API keys like Produce, Fetch, Metadata, CreateTopics, and DescribeTopicPartitions to storage services. 
+Current protocol routing is clean: `jansu-broker/src/service/storage.rs` wires Kafka API keys like Produce, Fetch, Metadata, CreateTopics, and DescribeTopicPartitions to storage services.
 
-Current Produce service calls `ctx.state().produce(...)` directly and returns `current_leader(None)`, which means leader enforcement and leader hints are not yet implemented. 
+Current Produce service calls `ctx.state().produce(...)` directly and returns `current_leader(None)`, which means leader enforcement and leader hints are not yet implemented.
 
-Current Fetch service calls `ctx.state().fetch(...)`, then `offset_stage(...)`, and always returns `diverging_epoch(None)` and `current_leader(None)` for normal fetch responses. Phase 11 must change this to support follower fetches, epoch fencing, high-watermark visibility, and divergence detection. 
+Current Fetch service calls `ctx.state().fetch(...)`, then `offset_stage(...)`, and always returns `diverging_epoch(None)` and `current_leader(None)` for normal fetch responses. Phase 11 must change this to support follower fetches, epoch fencing, high-watermark visibility, and divergence detection.
 
-Current `DynoStore` metadata has producers, topics, and transactions, but no broker registry, partition leader, ISR, follower progress, or leader epoch metadata. Its `register_broker` currently returns `Ok(())`, `brokers()` returns only the local broker, and `create_topic` initializes topic/watermark state without true replica assignment. 
+Current `DynoStore` metadata has producers, topics, and transactions, but no broker registry, partition leader, ISR, follower progress, or leader epoch metadata. Its `register_broker` currently returns `Ok(())`, `brokers()` returns only the local broker, and `create_topic` initializes topic/watermark state without true replica assignment.
 
 ---
 
@@ -122,26 +122,26 @@ This keeps it realistic, testable, and reviewable.
 
 # Files to create
 
-## New crate: `tansu-replication`
+## New crate: `jansu-replication`
 
 Create a small crate that contains the pure replication model and state machine. This is worth it because ISR calculation, HW advancement, leader epochs, and truncation decisions should be testable without spinning up Kafka protocol services.
 
 Add:
 
 ```text
-tansu-replication/Cargo.toml
-tansu-replication/src/lib.rs
-tansu-replication/src/error.rs
-tansu-replication/src/model.rs
-tansu-replication/src/isr.rs
-tansu-replication/src/high_watermark.rs
-tansu-replication/src/epoch.rs
-tansu-replication/src/assignment.rs
-tansu-replication/src/config.rs
-tansu-replication/tests/high_watermark.rs
-tansu-replication/tests/isr.rs
-tansu-replication/tests/leader_epoch.rs
-tansu-replication/tests/assignment.rs
+jansu-replication/Cargo.toml
+jansu-replication/src/lib.rs
+jansu-replication/src/error.rs
+jansu-replication/src/model.rs
+jansu-replication/src/isr.rs
+jansu-replication/src/high_watermark.rs
+jansu-replication/src/epoch.rs
+jansu-replication/src/assignment.rs
+jansu-replication/src/config.rs
+jansu-replication/tests/high_watermark.rs
+jansu-replication/tests/isr.rs
+jansu-replication/tests/leader_epoch.rs
+jansu-replication/tests/assignment.rs
 ```
 
 Touch root:
@@ -157,7 +157,7 @@ Add the new workspace member:
 [workspace]
 members = [
     # existing members...
-    "tansu-replication",
+    "jansu-replication",
 ]
 ```
 
@@ -176,97 +176,97 @@ proptest = "1"
 
 ---
 
-# Files to touch in `tansu-storage`
+# Files to touch in `jansu-storage`
 
 ```text
-tansu-storage/Cargo.toml
+jansu-storage/Cargo.toml
 
-tansu-storage/src/lib.rs
-tansu-storage/src/service.rs
+jansu-storage/src/lib.rs
+jansu-storage/src/service.rs
 
-tansu-storage/src/replication.rs
-tansu-storage/src/replication/mod.rs
-tansu-storage/src/replication/log.rs
-tansu-storage/src/replication/metadata.rs
-tansu-storage/src/replication/backend.rs
-tansu-storage/src/replication/errors.rs
+jansu-storage/src/replication.rs
+jansu-storage/src/replication/mod.rs
+jansu-storage/src/replication/log.rs
+jansu-storage/src/replication/metadata.rs
+jansu-storage/src/replication/backend.rs
+jansu-storage/src/replication/errors.rs
 
-tansu-storage/src/service/produce.rs
-tansu-storage/src/service/fetch.rs
-tansu-storage/src/service/metadata.rs
-tansu-storage/src/service/create_topics.rs
-tansu-storage/src/service/describe_topic_partitions.rs
-tansu-storage/src/service/list_offsets.rs
-tansu-storage/src/service/list_partition_reassignments.rs
+jansu-storage/src/service/produce.rs
+jansu-storage/src/service/fetch.rs
+jansu-storage/src/service/metadata.rs
+jansu-storage/src/service/create_topics.rs
+jansu-storage/src/service/describe_topic_partitions.rs
+jansu-storage/src/service/list_offsets.rs
+jansu-storage/src/service/list_partition_reassignments.rs
 
-tansu-storage/src/dynostore.rs
-tansu-storage/src/dynostore/metadata.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/dynostore/metadata.rs
 
-tansu-storage/src/pg.rs
-tansu-storage/src/lite.rs
-tansu-storage/src/limbo.rs
-tansu-storage/src/sql.rs
-tansu-storage/src/slate/storage.rs
-tansu-storage/src/null.rs
-tansu-storage/src/proxy.rs
+jansu-storage/src/pg.rs
+jansu-storage/src/lite.rs
+jansu-storage/src/limbo.rs
+jansu-storage/src/sql.rs
+jansu-storage/src/slate/storage.rs
+jansu-storage/src/null.rs
+jansu-storage/src/proxy.rs
 ```
 
 SQL/schema files to create or modify, depending on existing backend layout:
 
 ```text
-tansu-storage/src/ddl/pg/phase11_replication.sql
-tansu-storage/src/ddl/lite/phase11_replication.sql
-tansu-storage/src/ddl/turso/phase11_replication.sql
+jansu-storage/src/ddl/pg/phase11_replication.sql
+jansu-storage/src/ddl/lite/phase11_replication.sql
+jansu-storage/src/ddl/turso/phase11_replication.sql
 
-tansu-storage/src/sql/replication.rs
-tansu-storage/src/sql/broker.rs
-tansu-storage/src/sql/leader_epoch.rs
+jansu-storage/src/sql/replication.rs
+jansu-storage/src/sql/broker.rs
+jansu-storage/src/sql/leader_epoch.rs
 ```
 
 Tests:
 
 ```text
-tansu-storage/tests/replication_metadata.rs
-tansu-storage/tests/replication_log.rs
-tansu-storage/tests/high_watermark.rs
-tansu-storage/tests/follower_append.rs
-tansu-storage/tests/truncation.rs
+jansu-storage/tests/replication_metadata.rs
+jansu-storage/tests/replication_log.rs
+jansu-storage/tests/high_watermark.rs
+jansu-storage/tests/follower_append.rs
+jansu-storage/tests/truncation.rs
 ```
 
 ---
 
-# Files to touch in `tansu-broker`
+# Files to touch in `jansu-broker`
 
 ```text
-tansu-broker/Cargo.toml
+jansu-broker/Cargo.toml
 
-tansu-broker/src/broker.rs
-tansu-broker/src/service.rs
-tansu-broker/src/service/storage.rs
+jansu-broker/src/broker.rs
+jansu-broker/src/service.rs
+jansu-broker/src/service/storage.rs
 
-tansu-broker/src/replication.rs
-tansu-broker/src/replication/mod.rs
-tansu-broker/src/replication/manager.rs
-tansu-broker/src/replication/task.rs
-tansu-broker/src/replication/transport.rs
-tansu-broker/src/replication/reconcile.rs
-tansu-broker/src/replication/error.rs
+jansu-broker/src/replication.rs
+jansu-broker/src/replication/mod.rs
+jansu-broker/src/replication/manager.rs
+jansu-broker/src/replication/task.rs
+jansu-broker/src/replication/transport.rs
+jansu-broker/src/replication/reconcile.rs
+jansu-broker/src/replication/error.rs
 
-tansu-broker/tests/replication_cluster.rs
-tansu-broker/tests/leader_epoch_failover.rs
-tansu-broker/tests/isr_shrink_expand.rs
+jansu-broker/tests/replication_cluster.rs
+jansu-broker/tests/leader_epoch_failover.rs
+jansu-broker/tests/isr_shrink_expand.rs
 ```
 
 ---
 
-# Files to maybe touch in `tansu-client`
+# Files to maybe touch in `jansu-client`
 
-Follower replication should preferably use the same Kafka Fetch protocol that external brokers/clients would use. If `tansu-client` already has enough request plumbing, extend it. Otherwise add a small internal replication client.
+Follower replication should preferably use the same Kafka Fetch protocol that external brokers/clients would use. If `jansu-client` already has enough request plumbing, extend it. Otherwise add a small internal replication client.
 
 ```text
-tansu-client/src/replication.rs
-tansu-client/src/lib.rs
-tansu-client/tests/follower_fetch.rs
+jansu-client/src/replication.rs
+jansu-client/src/lib.rs
+jansu-client/tests/follower_fetch.rs
 ```
 
 ---
@@ -276,11 +276,11 @@ tansu-client/tests/follower_fetch.rs
 Only touch these if the generated Kafka protocol model lacks fields or APIs needed for Phase 11:
 
 ```text
-tansu-model/...
-tansu-generator/...
-tansu-sans-io/src/...
-tansu-sans-io/tests/encode.rs
-tansu-sans-io/tests/decode.rs
+jansu-model/...
+jansu-generator/...
+jansu-sans-io/src/...
+jansu-sans-io/tests/encode.rs
+jansu-sans-io/tests/decode.rs
 ```
 
 Specifically verify that these exist:
@@ -306,7 +306,7 @@ Kafka’s protocol docs list `OffsetForLeaderEpoch` as API key 23, and that API 
 
 ```text
 README.md
-tansu-storage/README.md
+jansu-storage/README.md
 docs/replication.md
 docs/phase11-replication.md
 compose.yaml
@@ -337,7 +337,7 @@ Should a replica be removed from ISR?
 Should a follower truncate?
 ```
 
-## `tansu-replication/src/model.rs`
+## `jansu-replication/src/model.rs`
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -423,7 +423,7 @@ pub struct HighWatermarkUpdate {
 
 ## High-watermark calculation
 
-Create `tansu-replication/src/high_watermark.rs`:
+Create `jansu-replication/src/high_watermark.rs`:
 
 ```rust
 use crate::model::{HighWatermarkUpdate, PartitionReplicationState};
@@ -472,7 +472,7 @@ pub fn compute_high_watermark(
 
 ## ISR update logic
 
-Create `tansu-replication/src/isr.rs`:
+Create `jansu-replication/src/isr.rs`:
 
 ```rust
 use crate::model::PartitionReplicationState;
@@ -549,12 +549,12 @@ pub fn refresh_isr(
 
 ## Property tests
 
-Create `tansu-replication/tests/high_watermark.rs`:
+Create `jansu-replication/tests/high_watermark.rs`:
 
 ```rust
 use proptest::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
-use tansu_replication::{
+use jansu_replication::{
     high_watermark::compute_high_watermark,
     model::{PartitionReplicationState, ReplicaKey, ReplicaProgress},
 };
@@ -618,11 +618,11 @@ Steering: this pure state machine should become the place where reviewers can re
 
 Persist all brokers and partition assignments.
 
-Current `BrokerRegistrationRequest` lacks the advertised listener, and current `DynoStore::register_broker` is effectively no-op. Phase 11 needs broker registration to populate cluster metadata and leader/follower connections.  
+Current `BrokerRegistrationRequest` lacks the advertised listener, and current `DynoStore::register_broker` is effectively no-op. Phase 11 needs broker registration to populate cluster metadata and leader/follower connections.
 
 ## Modify `BrokerRegistrationRequest`
 
-In `tansu-storage/src/lib.rs`:
+In `jansu-storage/src/lib.rs`:
 
 ```rust
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -638,7 +638,7 @@ pub struct BrokerRegistrationRequest {
 }
 ```
 
-Then in `tansu-broker/src/broker.rs`, pass the advertised listener:
+Then in `jansu-broker/src/broker.rs`, pass the advertised listener:
 
 ```rust
 self.storage
@@ -655,7 +655,7 @@ self.storage
 
 ## Add broker model
 
-In `tansu-storage/src/replication/metadata.rs`:
+In `jansu-storage/src/replication/metadata.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -679,7 +679,7 @@ pub struct BrokerRegistration {
 
 ## DynoStore metadata shape
 
-In `tansu-storage/src/dynostore.rs`, extend `Meta`:
+In `jansu-storage/src/dynostore.rs`, extend `Meta`:
 
 ```rust
 #[derive(Clone, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -806,7 +806,7 @@ CREATE TABLE IF NOT EXISTS leader_epoch_checkpoint (
 
 When creating topics, assign replicas to brokers and initialize leader/ISR/epoch state.
 
-Current `CreateTopicsService` defaults `replication_factor=-1` to `1`, then delegates to `storage.create_topic(...)`. 
+Current `CreateTopicsService` defaults `replication_factor=-1` to `1`, then delegates to `storage.create_topic(...)`.
 
 Phase 11 should change the storage implementation behind `create_topic` so that:
 
@@ -819,7 +819,7 @@ not enough brokers -> InvalidReplicationFactor
 
 ## Assignment logic
 
-In `tansu-replication/src/assignment.rs`:
+In `jansu-replication/src/assignment.rs`:
 
 ```rust
 use crate::error::{Error, Result};
@@ -915,11 +915,11 @@ Do not keep using one generic `Storage::produce` and `Storage::fetch` internally
 
 ## Add storage types
 
-In `tansu-storage/src/replication/log.rs`:
+In `jansu-storage/src/replication/log.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
-use tansu_sans_io::record::deflated;
+use jansu_sans_io::record::deflated;
 
 use crate::Topition;
 
@@ -982,7 +982,7 @@ pub struct DivergingEpoch {
 
 ## Extend storage trait
 
-In `tansu-storage/src/lib.rs`, add methods to `Storage`.
+In `jansu-storage/src/lib.rs`, add methods to `Storage`.
 
 A conservative approach is to add default methods returning `UnsupportedStorageUrl` or `UnknownServerError` so backends can be migrated incrementally.
 
@@ -1076,11 +1076,11 @@ batch.base_offset > local LEO -> gap; fetch missing data first
 
 Produce must go only to the leader. Followers must reject or redirect with correct Kafka error metadata.
 
-Current Produce service calls `storage.produce(...)` directly and returns `current_leader(None)`. 
+Current Produce service calls `storage.produce(...)` directly and returns `current_leader(None)`.
 
 ## Add acks model
 
-In `tansu-storage/src/replication/mod.rs` or `tansu-replication/src/model.rs`:
+In `jansu-storage/src/replication/mod.rs` or `jansu-replication/src/model.rs`:
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1104,7 +1104,7 @@ impl ProduceAcks {
 
 ## Modify `ProduceService`
 
-In `tansu-storage/src/service/produce.rs`, update `partition`.
+In `jansu-storage/src/service/produce.rs`, update `partition`.
 
 Pseudo-flow:
 
@@ -1171,7 +1171,7 @@ async fn wait_for_high_watermark<G: Storage>(
 
 ## Error behavior
 
-Use these Kafka error codes where available in `tansu_sans_io::ErrorCode`:
+Use these Kafka error codes where available in `jansu_sans_io::ErrorCode`:
 
 ```text
 NotLeaderOrFollower
@@ -1230,11 +1230,11 @@ follower fetch: replica_id = broker id
 
 Kafka documents `replica_id` as the broker id of the follower, with normal consumers using `-1`. ([Apache Kafka][2])
 
-Current `FetchService` does not distinguish these paths. 
+Current `FetchService` does not distinguish these paths.
 
 ## Add fetch kind detection
 
-In `tansu-storage/src/service/fetch.rs`:
+In `jansu-storage/src/service/fetch.rs`:
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1390,11 +1390,11 @@ if follower_epoch < leader_epoch {
 
 Each broker must run background tasks for partitions where it is a follower.
 
-Current broker startup already has a clean lifecycle: register, listen, maintain, cancellation token. Add replication manager startup into that lifecycle. 
+Current broker startup already has a clean lifecycle: register, listen, maintain, cancellation token. Add replication manager startup into that lifecycle.
 
 ## Broker lifecycle change
 
-In `tansu-broker/src/broker.rs`, change:
+In `jansu-broker/src/broker.rs`, change:
 
 ```rust
 pub async fn serve(&mut self, started: Instant) -> Result<()> {
@@ -1441,7 +1441,7 @@ set.spawn(async move {
 });
 ```
 
-## `tansu-broker/src/replication/manager.rs`
+## `jansu-broker/src/replication/manager.rs`
 
 ```rust
 use std::{collections::BTreeSet, time::Duration};
@@ -1449,7 +1449,7 @@ use tokio::{task::JoinSet, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument};
 
-use tansu_storage::{Result, Storage, Topition};
+use jansu_storage::{Result, Storage, Topition};
 
 #[derive(Clone, Debug)]
 pub struct ReplicaManager<S> {
@@ -1537,7 +1537,7 @@ async fn follower_assignments(&self, broker_id: i32) -> Result<Vec<Topition>>;
 
 ## Partition replica task
 
-In `tansu-broker/src/replication/task.rs`:
+In `jansu-broker/src/replication/task.rs`:
 
 ```rust
 use std::time::Duration;
@@ -1545,7 +1545,7 @@ use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument};
 
-use tansu_storage::{
+use jansu_storage::{
     FollowerAppendRequest, ReplicaFetchRequest, Result, Storage, Topition,
 };
 
@@ -1696,7 +1696,7 @@ High watermark must be the minimum LEO of replicas in ISR, never decreasing.
 
 ## New storage method
 
-In `tansu-storage/src/lib.rs`:
+In `jansu-storage/src/lib.rs`:
 
 ```rust
 async fn report_follower_position(
@@ -1792,7 +1792,7 @@ async fn report_follower_position(
 
 ## Maintenance ISR shrink
 
-The broker already periodically calls `storage.maintain(SystemTime::now())`. 
+The broker already periodically calls `storage.maintain(SystemTime::now())`.
 
 Use that hook for ISR shrink:
 
@@ -2093,11 +2093,11 @@ ISR
 offline replicas
 ```
 
-Current Metadata service delegates to `storage.metadata(...)` and returns brokers/topics. 
+Current Metadata service delegates to `storage.metadata(...)` and returns brokers/topics.
 
 ## Update `brokers()`
 
-Current `DynoStore::brokers()` returns only the local broker. 
+Current `DynoStore::brokers()` returns only the local broker.
 
 Change to:
 
@@ -2270,7 +2270,7 @@ For partial-batch truncation, fetch and rewrite the affected row.
 
 # Workstream 13: service-channel plumbing
 
-`RequestChannelService` implements `Storage` by sending `Request` enum variants through an mpsc channel. It already has `Produce`, `Fetch`, `OffsetStage`, `Metadata`, etc. 
+`RequestChannelService` implements `Storage` by sending `Request` enum variants through an mpsc channel. It already has `Produce`, `Fetch`, `OffsetStage`, `Metadata`, etc.
 
 Add request variants:
 
@@ -2354,7 +2354,7 @@ high_watermark
 log_start
 ```
 
-That is useful, but Phase 11 needs leader epoch too. Existing fetch uses `offset_stage.high_watermark()` and `offset_stage.last_stable()`. 
+That is useful, but Phase 11 needs leader epoch too. Existing fetch uses `offset_stage.high_watermark()` and `offset_stage.last_stable()`.
 
 Options:
 
@@ -2411,8 +2411,8 @@ Support follower reconciliation and Kafka client compatibility.
 If `OffsetForLeaderEpoch` is already generated, add route and service:
 
 ```text
-tansu-storage/src/service/offset_for_leader_epoch.rs
-tansu-broker/src/service/storage.rs
+jansu-storage/src/service/offset_for_leader_epoch.rs
+jansu-broker/src/service/storage.rs
 ```
 
 Add module:
@@ -2425,8 +2425,8 @@ pub use offset_for_leader_epoch::OffsetForLeaderEpochService;
 Route it:
 
 ```rust
-use tansu_sans_io::OffsetForLeaderEpochRequest;
-use tansu_storage::OffsetForLeaderEpochService;
+use jansu_sans_io::OffsetForLeaderEpochRequest;
+use jansu_storage::OffsetForLeaderEpochService;
 
 pub fn offset_for_leader_epoch<S>(
     builder: FrameRouteBuilder<(), Error>,
@@ -2485,7 +2485,7 @@ return UNDEFINED_EPOCH_OFFSET or appropriate error
 
 Create a deterministic in-process 3-broker test harness.
 
-## `tansu-broker/tests/support/cluster.rs`
+## `jansu-broker/tests/support/cluster.rs`
 
 ```rust
 pub struct TestCluster {
@@ -2749,18 +2749,18 @@ Add metrics now; do not wait for Phase 16, because replication is impossible to 
 Metrics:
 
 ```text
-tansu_replication_leader_partitions
-tansu_replication_follower_partitions
-tansu_replication_isr_size
-tansu_replication_under_min_isr
-tansu_replication_log_end_offset
-tansu_replication_high_watermark
-tansu_replication_lag_records
-tansu_replication_lag_millis
-tansu_replication_follower_fetch_bytes
-tansu_replication_follower_fetch_errors
-tansu_replication_truncations
-tansu_replication_leader_epoch_changes
+jansu_replication_leader_partitions
+jansu_replication_follower_partitions
+jansu_replication_isr_size
+jansu_replication_under_min_isr
+jansu_replication_log_end_offset
+jansu_replication_high_watermark
+jansu_replication_lag_records
+jansu_replication_lag_millis
+jansu_replication_follower_fetch_bytes
+jansu_replication_follower_fetch_errors
+jansu_replication_truncations
+jansu_replication_leader_epoch_changes
 ```
 
 Trace spans:
@@ -2799,39 +2799,39 @@ acks=all timed out
 Update `compose.yaml` with 3 brokers:
 
 ```yaml
-tansu-1:
-  image: tansu:local
+jansu-1:
+  image: jansu:local
   environment:
-    CLUSTER_ID: tansu_cluster
+    CLUSTER_ID: jansu_cluster
     NODE_ID: 1
     LISTENER_URL: tcp://0.0.0.0:9092
-    ADVERTISED_LISTENER_URL: tcp://tansu-1:9092
-    STORAGE_ENGINE: s3://tansu/
+    ADVERTISED_LISTENER_URL: tcp://jansu-1:9092
+    STORAGE_ENGINE: s3://jansu/
 
-tansu-2:
-  image: tansu:local
+jansu-2:
+  image: jansu:local
   environment:
-    CLUSTER_ID: tansu_cluster
+    CLUSTER_ID: jansu_cluster
     NODE_ID: 2
     LISTENER_URL: tcp://0.0.0.0:9092
-    ADVERTISED_LISTENER_URL: tcp://tansu-2:9092
-    STORAGE_ENGINE: s3://tansu/
+    ADVERTISED_LISTENER_URL: tcp://jansu-2:9092
+    STORAGE_ENGINE: s3://jansu/
 
-tansu-3:
-  image: tansu:local
+jansu-3:
+  image: jansu:local
   environment:
-    CLUSTER_ID: tansu_cluster
+    CLUSTER_ID: jansu_cluster
     NODE_ID: 3
     LISTENER_URL: tcp://0.0.0.0:9092
-    ADVERTISED_LISTENER_URL: tcp://tansu-3:9092
-    STORAGE_ENGINE: s3://tansu/
+    ADVERTISED_LISTENER_URL: tcp://jansu-3:9092
+    STORAGE_ENGINE: s3://jansu/
 ```
 
 Update `justfile`:
 
 ```make
 replication-up:
-    docker compose up -d minio tansu-1 tansu-2 tansu-3
+    docker compose up -d minio jansu-1 jansu-2 jansu-3
 
 replication-topic:
     kafka-topics --bootstrap-server localhost:9092 \
@@ -2842,9 +2842,9 @@ replication-describe:
       --describe --topic phase11
 
 replication-test:
-    cargo test -p tansu-replication
-    cargo test -p tansu-storage replication
-    cargo test -p tansu-broker replication
+    cargo test -p jansu-replication
+    cargo test -p jansu-storage replication
+    cargo test -p jansu-broker replication
 ```
 
 ---
@@ -2884,7 +2884,7 @@ Files:
 
 ```text
 Cargo.toml
-tansu-replication/*
+jansu-replication/*
 ```
 
 Deliver:
@@ -2905,11 +2905,11 @@ No broker/storage changes yet.
 Files:
 
 ```text
-tansu-storage/src/lib.rs
-tansu-storage/src/dynostore.rs
-tansu-storage/src/sql/*
-tansu-storage/src/ddl/*
-tansu-broker/src/broker.rs
+jansu-storage/src/lib.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/sql/*
+jansu-storage/src/ddl/*
+jansu-broker/src/broker.rs
 ```
 
 Deliver:
@@ -2925,11 +2925,11 @@ Metadata response can list multiple brokers
 Files:
 
 ```text
-tansu-storage/src/service/create_topics.rs
-tansu-storage/src/dynostore.rs
-tansu-storage/src/pg.rs
-tansu-storage/src/lite.rs
-tansu-storage/src/sql.rs
+jansu-storage/src/service/create_topics.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/pg.rs
+jansu-storage/src/lite.rs
+jansu-storage/src/sql.rs
 ```
 
 Deliver:
@@ -2946,9 +2946,9 @@ metadata describe shows real replicas/ISR
 Files:
 
 ```text
-tansu-storage/src/replication/log.rs
-tansu-storage/src/dynostore.rs
-tansu-storage/src/sql/*
+jansu-storage/src/replication/log.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/sql/*
 ```
 
 Deliver:
@@ -2967,8 +2967,8 @@ RF=1 compatibility
 Files:
 
 ```text
-tansu-storage/src/service/produce.rs
-tansu-storage/src/service.rs
+jansu-storage/src/service/produce.rs
+jansu-storage/src/service.rs
 ```
 
 Deliver:
@@ -2985,8 +2985,8 @@ min.insync.replicas enforced
 Files:
 
 ```text
-tansu-storage/src/service/fetch.rs
-tansu-storage/src/service.rs
+jansu-storage/src/service/fetch.rs
+jansu-storage/src/service.rs
 ```
 
 Deliver:
@@ -3004,9 +3004,9 @@ HW advancement
 Files:
 
 ```text
-tansu-broker/src/broker.rs
-tansu-broker/src/replication/*
-tansu-client/src/replication.rs, if using TCP protocol transport
+jansu-broker/src/broker.rs
+jansu-broker/src/replication/*
+jansu-client/src/replication.rs, if using TCP protocol transport
 ```
 
 Deliver:
@@ -3023,11 +3023,11 @@ restart catch-up
 Files:
 
 ```text
-tansu-storage/src/replication/epoch.rs
-tansu-storage/src/dynostore.rs
-tansu-storage/src/sql/*
-tansu-storage/src/service/offset_for_leader_epoch.rs
-tansu-broker/src/service/storage.rs
+jansu-storage/src/replication/epoch.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/sql/*
+jansu-storage/src/service/offset_for_leader_epoch.rs
+jansu-broker/src/service/storage.rs
 ```
 
 Deliver:
@@ -3045,10 +3045,10 @@ truncate divergent follower
 Files:
 
 ```text
-tansu-storage/src/dynostore.rs
-tansu-storage/src/pg.rs
-tansu-storage/src/lite.rs
-tansu-storage/src/service.rs
+jansu-storage/src/dynostore.rs
+jansu-storage/src/pg.rs
+jansu-storage/src/lite.rs
+jansu-storage/src/service.rs
 ```
 
 Deliver:
@@ -3064,13 +3064,13 @@ metrics for ISR/HW/lag
 Files:
 
 ```text
-tansu-broker/tests/*
-tansu-storage/tests/*
+jansu-broker/tests/*
+jansu-storage/tests/*
 compose.yaml
 justfile
 docs/replication.md
 README.md
-tansu-storage/README.md
+jansu-storage/README.md
 .github/workflows/*
 ```
 
@@ -3112,7 +3112,7 @@ A leader switch without persisted leader epoch history will eventually corrupt l
 
 ## Risk 5: ISR updates not atomic
 
-ISR and HW updates must be persisted together under compare-and-swap/versioned metadata. DynoStore already has optimistic update machinery around metadata; use that pattern for partition replication state. 
+ISR and HW updates must be persisted together under compare-and-swap/versioned metadata. DynoStore already has optimistic update machinery around metadata; use that pattern for partition replication state.
 
 ## Risk 6: Phase 12 scope creep
 
@@ -3135,13 +3135,13 @@ Then Phase 12 can own automatic broker failure detection and elections.
 Phase 11 is done when these commands and tests pass:
 
 ```bash
-cargo test -p tansu-replication
-cargo test -p tansu-storage replication
-cargo test -p tansu-broker replication
+cargo test -p jansu-replication
+cargo test -p jansu-storage replication
+cargo test -p jansu-broker replication
 ```
 
 ```bash
-docker compose up -d minio tansu-1 tansu-2 tansu-3
+docker compose up -d minio jansu-1 jansu-2 jansu-3
 
 kafka-topics \
   --bootstrap-server localhost:9092 \
@@ -3171,10 +3171,10 @@ Normal consumers never read beyond HW.
 Follower fetches can read up to leader LEO.
 ```
 
-That is the point where Tansu’s Phase 11 has become a real Kafka-style replication layer rather than durable shared storage with Kafka-shaped metadata.
+That is the point where Jansu’s Phase 11 has become a real Kafka-style replication layer rather than durable shared storage with Kafka-shaped metadata.
 
-[1]: https://github.com/tansu-io/tansu "GitHub - tansu-io/tansu: Apache Kafka® compatible broker with S3, PostgreSQL, SQLite, Apache Iceberg and Delta Lake · GitHub"
+[1]: https://github.com/jansu-io/jansu "GitHub - jansu-io/jansu: Apache Kafka® compatible broker with S3, PostgreSQL, SQLite, Apache Iceberg and Delta Lake · GitHub"
 [2]: https://kafka.apache.org/22/design/protocol/ "Protocol | Apache Kafka"
-[3]: https://github.com/tansu-io/tansu/tree/main/tansu-storage/src "tansu/tansu-storage/src at main · tansu-io/tansu · GitHub"
-[4]: https://github.com/tansu-io/tansu/tree/main/tansu-broker/src "tansu/tansu-broker/src at main · tansu-io/tansu · GitHub"
+[3]: https://github.com/jansu-io/jansu/tree/main/jansu-storage/src "jansu/jansu-storage/src at main · jansu-io/jansu · GitHub"
+[4]: https://github.com/jansu-io/jansu/tree/main/jansu-broker/src "jansu/jansu-broker/src at main · jansu-io/jansu · GitHub"
 

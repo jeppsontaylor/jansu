@@ -1,0 +1,38 @@
+# Phase 11 - Idempotent Producer Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/11-idempotent-producer.md`
+
+## Intent
+
+- Track idempotent producer sequencing, producer ID, epoch, and fencing work.
+
+## Files Touched
+
+- `tips/phases/11-idempotent-producer.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future Phase 11 attempts.
+
+## Residual Risks
+
+- Idempotence semantics depend on Phase 07 stability and storage-backed sequence proof.

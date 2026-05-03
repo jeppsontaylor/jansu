@@ -7,11 +7,11 @@
 tips/phases/02-api-versions-truth.md
 
 ## Intent
-Harden Tansu's API versioning to strictly adhere to "no advertised API without proof". Ensure that `tansu-service` rejects any request versions outside the explicitly approved ranges by responding with `ErrorCode::UnsupportedVersion` (35), synthesized as correctly typed protocol responses.
+Harden Jansu's API versioning to strictly adhere to "no advertised API without proof". Ensure that `jansu-service` rejects any request versions outside the explicitly approved ranges by responding with `ErrorCode::UnsupportedVersion` (35), synthesized as correctly typed protocol responses.
 
 ## Files Touched
-- `tansu-service/src/api.rs`
-- `tansu-broker/tests/compatibility_contract.rs`
+- `jansu-service/src/api.rs`
+- `jansu-broker/tests/compatibility_contract.rs`
 - `phase-logs/index.json`
 - `phase-logs/02-api-versions-truth.md.log`
 
@@ -19,11 +19,11 @@ Harden Tansu's API versioning to strictly adhere to "no advertised API without p
 N/A (No new ledger rows added, but bounded execution enforced for all APIs)
 
 ## Tests Added
-- `tansu-broker/tests/compatibility_contract.rs::broker_rejects_unsupported_request_versions`
+- `jansu-broker/tests/compatibility_contract.rs::broker_rejects_unsupported_request_versions`
 
 ## Verification Commands
-- `cargo test -p tansu-broker --test compatibility_contract`
-- `cargo check -p tansu-service -p tansu-broker`
+- `cargo test -p jansu-broker --test compatibility_contract`
+- `cargo check -p jansu-service -p jansu-broker`
 - `cargo fmt --all`
 
 ## Outcomes

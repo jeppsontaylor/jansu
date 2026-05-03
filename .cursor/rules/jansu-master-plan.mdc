@@ -1,0 +1,9 @@
+---
+alwaysApply: true
+---
+
+# Jansu Master Plan Rule
+
+Before progressing repository work, read `AGENTS.md`, `MASTER_PLAN.md`, `AUDIT.md`, `phase-logs/index.json`, and the relevant `tips/phases` document.
+
+Only implement phase-backed work. Update `phase-logs` and `AUDIT.md` with the outcome. Do not make compatibility claims without ledger and test proof.

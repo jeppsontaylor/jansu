@@ -1,0 +1,38 @@
+# Phase 15 - Cluster Metadata Modern Kafka Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/15-cluster-metadata-modern-kafka.md`
+
+## Intent
+
+- Track cluster metadata, controller, broker registration, and modern Kafka metadata behavior.
+
+## Files Touched
+
+- `tips/phases/15-cluster-metadata-modern-kafka.md`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- None.
+
+## Tests Added
+
+- None.
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Canonical log created for future Phase 15 attempts.
+
+## Residual Risks
+
+- Modern metadata and controller semantics remain uncertified.

@@ -9,16 +9,16 @@ Can run with: Phase 08, Phase 09, Phase 10, Phase 13, and Phase 14 after shared 
 Goal: Make Produce behavior Kafka-exact for normal producer configs before idempotence and transactions are claimed complete.
 
 Current code anchors:
-- `tansu-storage/src/service/produce.rs` owns Produce request handling.
-- `tansu-storage/src/lib.rs` has `Storage::produce` and producer initialization hooks.
-- `tansu-sans-io` owns record batch encode/decode, compression, CRC, request/response schemas, and API version metadata.
-- `tansu-broker/tests/produce_fetch.rs` and `tansu-broker/tests/person.rs` cover current produce/fetch behavior.
-- `tansu-broker/tests/pg_init_producer.rs` and `tansu-broker/tests/txn.rs` cover some producer/transaction-adjacent behavior.
-- `tansu-schema/` integrates schema validation and must remain compatible with Kafka produce semantics.
+- `jansu-storage/src/service/produce.rs` owns Produce request handling.
+- `jansu-storage/src/lib.rs` has `Storage::produce` and producer initialization hooks.
+- `jansu-sans-io` owns record batch encode/decode, compression, CRC, request/response schemas, and API version metadata.
+- `jansu-broker/tests/produce_fetch.rs` and `jansu-broker/tests/person.rs` cover current produce/fetch behavior.
+- `jansu-broker/tests/pg_init_producer.rs` and `jansu-broker/tests/txn.rs` cover some producer/transaction-adjacent behavior.
+- `jansu-schema/` integrates schema validation and must remain compatible with Kafka produce semantics.
 
 Implementation steps:
 - Define exact Produce version caps in Phase 02 registry based on tests, not descriptor max versions.
-- Implement `acks=0`, `acks=1`, and `acks=all` semantics for Tansu's storage-backed profiles, including durable acknowledgment mapping per engine.
+- Implement `acks=0`, `acks=1`, and `acks=all` semantics for Jansu's storage-backed profiles, including durable acknowledgment mapping per engine.
 - Validate required acks, partition existence, topic authorization, message sizes, request sizes, record batch sizes, timestamps, magic, CRC, and compression.
 - Support gzip, snappy, lz4, and zstd according to Kafka record-batch behavior and crate capabilities.
 - Make per-partition errors exact for unknown topic, invalid partition, not leader or leader unavailable facade cases, record too large, invalid timestamp, invalid required acks, and storage failures.

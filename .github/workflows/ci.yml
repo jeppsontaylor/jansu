@@ -35,18 +35,18 @@ jobs:
       AWS_ENDPOINT: http://localhost:9000
       AWS_SECRET_ACCESS_KEY: minioadmin
       CARGO_BUILD_BUILD_DIR: /mnt/build
-      CLUSTER_ID: tansu-ci
+      CLUSTER_ID: jansu-ci
       DATA_LAKE: s3://lake
       ICEBERG_CATALOG: http://localhost:8181/catalog
-      ICEBERG_WAREHOUSE: tansu
+      ICEBERG_WAREHOUSE: jansu
       LAKEKEEPER_IMAGE: quay.io/lakekeeper/catalog:v0.8.5
       POSTGRES_IMAGE: ${{matrix.pg}}
       PROMETHEUS_LISTENER_URL: tcp://[::]:9100
       RUST_BACKTRACE: 1
-      RUST_LOG: debug,tansu_sans_io=warn,tansu_model=warn
+      RUST_LOG: debug,jansu_sans_io=warn,jansu_model=warn
       SCHEMA_REGISTRY: file://./etc/schema
-      STORAGE_ENGINE: s3://tansu/
-      TANSU_IMAGE: ghcr.io/tansu-io/tansu
+      STORAGE_ENGINE: s3://jansu/
+      JANSU_IMAGE: ghcr.io/jansu-io/jansu
     steps:
       - run: sudo mkdir /mnt/build
       - run: sudo chmod a+rwxt /mnt/build
@@ -242,16 +242,16 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
         storage:
-          - s3://tansu/
+          - s3://jansu/
           - postgres://postgres:postgres@db
-          - sqlite://tansu.db
+          - sqlite://jansu.db
         kafka:
           - apache/kafka:3.9.0
           - apache/kafka:3.8.1
           - apache/kafka:3.7.0
     runs-on: ${{matrix.os}}
     env:
-      ADVERTISED_LISTENER_URL: tcp://tansu:9092
+      ADVERTISED_LISTENER_URL: tcp://jansu:9092
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_ALLOW_HTTP: true
       AWS_DEFAULT_REGION: auto
@@ -261,7 +261,7 @@ jobs:
       KAFKA_IMAGE: ${{matrix.kafka}}
       PROMETHEUS_LISTENER_URL: tcp://localhost:9100
       RUST_BACKTRACE: 1
-      RUST_LOG: warn,tansu_broker=debug,tansu_storage=debug,tansu_schema=debug
+      RUST_LOG: warn,jansu_broker=debug,jansu_storage=debug,jansu_schema=debug
       STORAGE_ENGINE: ${{matrix.storage}}
     steps:
       - uses: docker/metadata-action@v6
@@ -275,7 +275,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
       - uses: actions/checkout@v6
         with:
-          repository: tansu-io/example-java
+          repository: jansu-io/example-java
           path: integration
       - uses: actions/checkout@v6
         with:
@@ -288,33 +288,33 @@ jobs:
       - run: docker compose --ansi never --progress plain up --no-color --quiet-pull --detach
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
       - run: docker compose --ansi never exec minio /usr/bin/mc ready local
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
       - run: docker compose --ansi never exec minio /usr/bin/mc alias set local http://localhost:9000 ${{ env.AWS_ACCESS_KEY_ID }} ${{ env.AWS_SECRET_ACCESS_KEY }}
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
-      - run: docker compose --ansi never exec minio /usr/bin/mc mb local/tansu
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
+      - run: docker compose --ansi never exec minio /usr/bin/mc mb local/jansu
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
       - run: sudo apt-get update
       - run: sudo apt-get install -y bats
       - run: docker compose exec db /usr/bin/pg_isready --timeout=60
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
       - run: docker compose logs
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
       - run: bats --trace --verbose-run tests
         working-directory: integration
         env:
-          TANSU_IMAGE: ghcr.io/tansu-io/tansu:${{steps.meta.outputs.version}}
+          JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
   release:
     if: ${{github.actor == 'shortishly'}}
     needs: [test, src, typos]
@@ -371,17 +371,17 @@ jobs:
           cargo build --release --target ${{matrix.target}} --features delta,dynostore,iceberg,libsql,parquet,postgres
           dist=$(mktemp -d -p ${{runner.temp}})
           mkdir "$dist"/bin
-          cp target/"${TARGET}"/release/tansu "$dist"/bin
+          cp target/"${TARGET}"/release/jansu "$dist"/bin
           cp compose.yaml example.env LICENSE README.md "$dist"
           cp -r etc "$dist"
-          tar --create --verbose --gzip --file=tansu-"${TARGET}".tar.gz -C "$dist" .
+          tar --create --verbose --gzip --file=jansu-"${TARGET}".tar.gz -C "$dist" .
       - if: ${{matrix.enabled && github.ref_type != 'tag'}}
         uses: actions/upload-artifact@v7
         with:
-          name: tansu-${{matrix.target}}
-          path: tansu-${{matrix.target}}.tar.gz
+          name: jansu-${{matrix.target}}
+          path: jansu-${{matrix.target}}.tar.gz
           if-no-files-found: error
       - if: ${{matrix.enabled && github.ref_type == 'tag'}}
         uses: softprops/action-gh-release@v2
         with:
-          files: tansu-${{matrix.target}}.tar.gz
+          files: jansu-${{matrix.target}}.tar.gz

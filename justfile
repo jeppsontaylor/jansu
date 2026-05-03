@@ -14,15 +14,15 @@ clean-workspace:
 license:
     cargo about generate about.hbs > license.html
 
-build profile="dev" features="delta,dynostore,iceberg,libsql,parquet,postgres,slatedb" bin="tansu": (cargo-build "--profile" profile "--timings" "--bin" bin "--no-default-features" "--features" features)
+build profile="dev" features="delta,dynostore,iceberg,libsql,parquet,postgres,slatedb" bin="jansu": (cargo-build "--profile" profile "--timings" "--bin" bin "--no-default-features" "--features" features)
 
 build-storage: clean-workspace (build "dev" "libsql") (build "dev" "postgres") (build "dev" "slatedb")
 
 build-examples: (cargo-build "--examples")
 
-release: (cargo-build "--release" "--bin" "tansu" "--no-default-features" "--features" "delta,dynostore,iceberg,libsql,parquet,postgres,slatedb")
+release: (cargo-build "--release" "--bin" "jansu" "--no-default-features" "--features" "delta,dynostore,iceberg,libsql,parquet,postgres,slatedb")
 
-release-sqlite: (cargo-build "--release" "--bin" "tansu" "--no-default-features" "--features" "libsql")
+release-sqlite: (cargo-build "--release" "--bin" "jansu" "--no-default-features" "--features" "libsql")
 
 test: test-workspace test-doc
 
@@ -46,7 +46,7 @@ check:
     cargo check --workspace --all-features --all-targets
 
 compatibility-contract:
-    cargo test -p tansu-broker --test compatibility_contract --all-features -- --nocapture
+    cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
 
 clippy:
     cargo clippy --workspace --all-features --all-targets -- -D warnings
@@ -58,10 +58,10 @@ miri:
     cargo +nightly miri test --no-fail-fast --all-features
 
 docker-build:
-    docker build --tag ghcr.io/tansu-io/tansu --no-cache --progress plain --debug .
+    docker build --tag ghcr.io/jansu-io/jansu --no-cache --progress plain --debug .
 
 docker-build-cross:
-    docker build --tag ghcr.io/tansu-io/tansu --no-cache --progress plain --platform linux/amd64,linux/arm64 --debug .
+    docker build --tag ghcr.io/jansu-io/jansu --no-cache --progress plain --platform linux/amd64,linux/arm64 --debug .
 
 minio-up: (docker-compose-up "minio")
 
@@ -72,15 +72,15 @@ minio-mc +args:
 
 minio-local-alias: (minio-mc "alias" "set" "local" "http://localhost:9000" "minioadmin" "minioadmin")
 
-minio-tansu-bucket: (minio-mc "mb" "local/tansu")
+minio-jansu-bucket: (minio-mc "mb" "local/jansu")
 
 minio-lake-bucket: (minio-mc "mb" "local/lake")
 
 minio-ready-local: (minio-mc "ready" "local")
 
-tansu-up: (docker-compose-up "tansu")
+jansu-up: (docker-compose-up "jansu")
 
-tansu-down: (docker-compose-down "tansu")
+jansu-down: (docker-compose-down "jansu")
 
 db-up: (docker-compose-up "db")
 
@@ -143,10 +143,10 @@ docker-prune:
     docker system prune --force
 
 docker-run:
-    docker run --detach --name tansu --publish 9092:9092 tansu
+    docker run --detach --name jansu --publish 9092:9092 jansu
 
 docker-rm-f:
-    docker rm --force tansu
+    docker rm --force jansu
 
 list-topics:
     kafka-topics --bootstrap-server ${ADVERTISED_LISTENER} --command-config command.properties --list
@@ -161,12 +161,12 @@ list-topics-scram-512:
     kafka-topics --bootstrap-server ${ADVERTISED_LISTENER} --command-config command-scram-512.properties --list
 
 user-create user password profile mechanism="scram512":
-    target/{{ replace(profile, "dev", "debug") }}/tansu user create {{ user }} {{ password }} --mechanism {{ mechanism }}
+    target/{{ replace(profile, "dev", "debug") }}/jansu user create {{ user }} {{ password }} --mechanism {{ mechanism }}
 
 add-alice-user profile="dev": (user-create "alice" "secret" profile "scram256") (user-create "alice" "secret" profile "scram512")
 
 user-delete user profile mechanism="scram512":
-    target/{{ replace(profile, "dev", "debug") }}/tansu user delete {{ user }} --mechanism {{ mechanism }}
+    target/{{ replace(profile, "dev", "debug") }}/jansu user delete {{ user }} --mechanism {{ mechanism }}
 
 delete-alice-user profile="dev": (user-delete "alice" profile "scram256") (user-delete "alice" profile "scram512")
 
@@ -210,19 +210,19 @@ test-reset-offsets-to-earliest:
     kafka-consumer-groups --bootstrap-server ${ADVERTISED_LISTENER} --group test-consumer-group --topic test:0 --reset-offsets --to-earliest --execute
 
 topic-create topic *args:
-    target/debug/tansu topic create {{ topic }} {{ args }}
+    target/debug/jansu topic create {{ topic }} {{ args }}
 
 topic-delete topic:
-    target/debug/tansu topic delete {{ topic }}
+    target/debug/jansu topic delete {{ topic }}
 
 cat-produce topic file:
-    target/debug/tansu cat produce {{ topic }} {{ file }}
+    target/debug/jansu cat produce {{ topic }} {{ file }}
 
 cat-consume topic:
-    target/debug/tansu cat consume {{ topic }} --max-wait-time-ms=5000
+    target/debug/jansu cat consume {{ topic }} --max-wait-time-ms=5000
 
 generator topic *args:
-    target/debug/tansu generator {{ args }} {{ topic }} 2>&1 >generator.log
+    target/debug/jansu generator {{ args }} {{ topic }} 2>&1 >generator.log
 
 duckdb-k-unnest-v-parquet topic:
     duckdb -init duckdb-init.sql :memory: "SELECT key,unnest(value) FROM '{{ replace(env("DATA_LAKE"), "file://./", "") }}/{{ topic }}/*/*.parquet'"
@@ -241,11 +241,11 @@ person-topic-populate: (cat-produce "person" "etc/data/persons.json")
 
 # produce valid data, that is accepted by the broker
 person-topic-produce-valid:
-    echo '{"key": "345-67-6543", "value": {"firstName": "John", "lastName": "Doe", "age": 21}}' | target/debug/tansu cat produce person
+    echo '{"key": "345-67-6543", "value": {"firstName": "John", "lastName": "Doe", "age": 21}}' | target/debug/jansu cat produce person
 
 # produce invalid data, that is rejected by the broker
 person-topic-produce-invalid:
-    echo '{"key": "ABC-12-4242", "value": {"firstName": "John", "lastName": "Doe", "age": -1}}' | target/debug/tansu cat produce person
+    echo '{"key": "ABC-12-4242", "value": {"firstName": "John", "lastName": "Doe", "age": -1}}' | target/debug/jansu cat produce person
 
 # person parquet
 person-duckdb-parquet: (duckdb-k-unnest-v-parquet "person")
@@ -272,13 +272,13 @@ search-topic-delete: (topic-delete "search")
 
 # produce data to search topic with etc/schema/search.proto
 search-topic-produce:
-    echo '{"value": {"query": "abc/def", "page_number": 6, "results_per_page": 13, "corpus": "CORPUS_WEB"}}' | target/debug/tansu cat produce search
+    echo '{"value": {"query": "abc/def", "page_number": 6, "results_per_page": 13, "corpus": "CORPUS_WEB"}}' | target/debug/jansu cat produce search
 
 # search parquet
 search-duckdb-parquet: (duckdb-parquet "search")
 
-tansu-server:
-    target/debug/tansu broker --schema-registry file://./etc/schema 2>&1 | tee broker.log
+jansu-server:
+    target/debug/jansu broker --schema-registry file://./etc/schema 2>&1 | tee broker.log
 
 kafka-proxy:
     docker run -d -p 19092:9092 apache/kafka:3.9.0
@@ -332,47 +332,47 @@ all: test miri
 flamegraph *args:
     cargo flamegraph {{ args }}
 
-benchmark-flamegraph: build docker-compose-down minio-up minio-ready-local minio-local-alias minio-tansu-bucket prometheus-up grafana-up
-    flamegraph -- target/debug/tansu broker 2>&1  | tee broker.log
+benchmark-flamegraph: build docker-compose-down minio-up minio-ready-local minio-local-alias minio-jansu-bucket prometheus-up grafana-up
+    flamegraph -- target/debug/jansu broker 2>&1  | tee broker.log
 
-benchmark: build docker-compose-down minio-up minio-ready-local minio-local-alias minio-tansu-bucket prometheus-up grafana-up
-    target/debug/tansu broker 2>&1  | tee broker.log
+benchmark: build docker-compose-down minio-up minio-ready-local minio-local-alias minio-jansu-bucket prometheus-up grafana-up
+    target/debug/jansu broker 2>&1  | tee broker.log
 
-otel profile="dev" *args: build docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket prometheus-up grafana-up
-    OTEL_METRIC_EXPORT_INTERVAL=5000 OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:9090/api/v1/otlp/" target/{{ replace(profile, "dev", "debug") }}/tansu broker {{ args }}  | tee broker.log
+otel profile="dev" *args: build docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket prometheus-up grafana-up
+    OTEL_METRIC_EXPORT_INTERVAL=5000 OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:9090/api/v1/otlp/" target/{{ replace(profile, "dev", "debug") }}/jansu broker {{ args }}  | tee broker.log
 
-otel-up: docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket prometheus-up grafana-up tansu-up
+otel-up: docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket prometheus-up grafana-up jansu-up
 
-tansu-broker profile *args:
-    target/{{ replace(profile, "dev", "debug") }}/tansu broker {{ args }} 2>&1 >broker.log
+jansu-broker profile *args:
+    target/{{ replace(profile, "dev", "debug") }}/jansu broker {{ args }} 2>&1 >broker.log
 
-flamegraph-tansu-broker profile *args:
+flamegraph-jansu-broker profile *args:
     #!/usr/bin/env zsh
     unset SCHEMA_REGISTRY
     export RUST_LOG=warn
-    flamegraph --verbose -- ./target/{{ replace(profile, "dev", "debug") }}/tansu broker {{ args }}
+    flamegraph --verbose -- ./target/{{ replace(profile, "dev", "debug") }}/jansu broker {{ args }}
 
 # run a debug broker with configuration from .env
-broker *args: build docker-compose-down prometheus-up grafana-up db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket lakehouse-catalog-up (tansu-broker "debug" args)
+broker *args: build docker-compose-down prometheus-up grafana-up db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket lakehouse-catalog-up (jansu-broker "debug" args)
 
 # run a release broker with configuration from .env
-broker-release *args: release docker-compose-down prometheus-up grafana-up db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket lakehouse-catalog-up (tansu-broker "release" args)
+broker-release *args: release docker-compose-down prometheus-up grafana-up db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket lakehouse-catalog-up (jansu-broker "release" args)
 
 # run a proxy with configuration from .env
 proxy *args:
-    target/debug/tansu proxy {{ args }} 2>&1 | tee proxy.log
+    target/debug/jansu proxy {{ args }} 2>&1 | tee proxy.log
 
-# teardown compose, rebuild: minio, db, tansu and lake buckets
-server: (cargo-build "--bin" "tansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket lakehouse-catalog-up
-    target/debug/tansu broker 2>&1  | tee broker.log
+# teardown compose, rebuild: minio, db, jansu and lake buckets
+server: (cargo-build "--bin" "jansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket lakehouse-catalog-up
+    target/debug/jansu broker 2>&1  | tee broker.log
 
-gdb: (cargo-build "--bin" "tansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket
-    rust-gdb --args target/debug/tansu broker
+gdb: (cargo-build "--bin" "jansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket
+    rust-gdb --args target/debug/jansu broker
 
-lldb: (cargo-build "--bin" "tansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket lakehouse-catalog-up
-    rust-lldb target/debug/tansu broker
+lldb: (cargo-build "--bin" "jansu") docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket lakehouse-catalog-up
+    rust-lldb target/debug/jansu broker
 
-ci: docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-tansu-bucket minio-lake-bucket lakehouse-catalog-up lakehouse-accept-terms-of-use lakehouse-create-warehouse
+ci: docker-compose-down db-up minio-up minio-ready-local minio-local-alias minio-jansu-bucket minio-lake-bucket lakehouse-catalog-up lakehouse-accept-terms-of-use lakehouse-create-warehouse
 
 # produce etc/data/observations.json with schema etc/schema/observation.avsc
 observation-produce: (cat-produce "observation" "etc/data/observations.json")
@@ -396,13 +396,13 @@ taxi-topic-populate: (cat-produce "taxi" "etc/data/trips.json")
 taxi-topic-consume: (cat-consume "taxi")
 
 # create taxi topic with generated fields with schema etc/schema/taxi.proto
-taxi-topic-create: (topic-create "taxi" "--partitions=1" "--config=tansu.lake.normalize=true" "--config=tansu.lake.partition=meta.day" "--config=tansu.lake.z_order=vendor_id" "--config=tansu.lake.sink=true" "--config=tansu.batch=true" "--config=tansu.batch.max_records=200" "--config=tansu.batch.timeout_ms=1000")
+taxi-topic-create: (topic-create "taxi" "--partitions=1" "--config=jansu.lake.normalize=true" "--config=jansu.lake.partition=meta.day" "--config=jansu.lake.z_order=vendor_id" "--config=jansu.lake.sink=true" "--config=jansu.batch=true" "--config=jansu.batch.max_records=200" "--config=jansu.batch.timeout_ms=1000")
 
 # create taxi topic with schema etc/schema/taxi.proto
-taxi-topic-create-plain: (topic-create "taxi" "--partitions" "1" "--config" "tansu.lake.sink=true")
+taxi-topic-create-plain: (topic-create "taxi" "--partitions" "1" "--config" "jansu.lake.sink=true")
 
 # create taxi topic with a flattened schema etc/schema/taxi.proto
-taxi-topic-create-normalize: (topic-create "taxi" "--partitions" "1" "--config" "tansu.lake.sink=true" "--config" "tansu.lake.normalize=true" "--config" "tansu.lake.normalize.separator=_" "--config" "tansu.lake.z_order=value_vendor_id")
+taxi-topic-create-normalize: (topic-create "taxi" "--partitions" "1" "--config" "jansu.lake.sink=true" "--config" "jansu.lake.normalize=true" "--config" "jansu.lake.normalize.separator=_" "--config" "jansu.lake.z_order=value_vendor_id")
 
 taxi-topic-generator: (generator "taxi" "--broker=tcp://localhost:9092" "--per-second=10" "--producers=16" "--batch-size=1" "--duration-seconds=60")
 
@@ -413,7 +413,7 @@ taxi-topic-delete: (topic-delete "taxi")
 taxi-duckdb-parquet: (duckdb-parquet "taxi")
 
 # taxi duckdb delta lake
-taxi-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/tansu.taxi');\"")
+taxi-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/jansu.taxi');\"")
 
 # create employee topic with etc/schema/employee.proto
 employee-topic-create: (topic-create "employee")
@@ -422,68 +422,68 @@ employee-topic-create: (topic-create "employee")
 employee-produce: (cat-produce "employee" "etc/data/employees.json")
 
 # employee duckdb delta lake
-employee-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/tansu.employee');\"")
+employee-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/jansu.employee');\"")
 
 # create customer topic with schema etc/schema/customer.proto
-customer-topic-create *args: (topic-create "customer" "--partitions=1" "--config=tansu.lake.normalize=true" "--config=tansu.lake.partition=meta.day" "--config=tansu.lake.sink=true" "--config=tansu.batch=true" "--config=tansu.batch.max_records=200" "--config=tansu.batch.timeout_ms=1000" args)
+customer-topic-create *args: (topic-create "customer" "--partitions=1" "--config=jansu.lake.normalize=true" "--config=jansu.lake.partition=meta.day" "--config=jansu.lake.sink=true" "--config=jansu.batch=true" "--config=jansu.batch.max_records=200" "--config=jansu.batch.timeout_ms=1000" args)
 
 customer-topic-generator *args: (generator "customer" args)
 
-customer-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/tansu.customer');\"")
+customer-duckdb-delta: (duckdb "\"select * from delta_scan('s3://lake/jansu.customer');\"")
 
-broker-memory profile="profiling": (build profile "dynostore") (tansu-broker profile "--storage-engine=memory://")
+broker-memory profile="profiling": (build profile "dynostore") (jansu-broker profile "--storage-engine=memory://")
 
-broker-null profile="profiling": (build profile "default") (tansu-broker profile "--storage-engine=null://")
+broker-null profile="profiling": (build profile "default") (jansu-broker profile "--storage-engine=null://")
 
-clean-tansu-db:
-    rm -f tansu.db* snapshot.db
+clean-jansu-db:
+    rm -f jansu.db* snapshot.db
 
 clean-lake-dir:
     rm -rf lake/*
 
-broker-sqlite-parquet profile="dev": clean-tansu-db clean-lake-dir (build profile "libsql,parquet") (tansu-broker profile "--storage-engine=sqlite://tansu.db" "parquet" "--location=file://./lake")
+broker-sqlite-parquet profile="dev": clean-jansu-db clean-lake-dir (build profile "libsql,parquet") (jansu-broker profile "--storage-engine=sqlite://jansu.db" "parquet" "--location=file://./lake")
 
-broker-sqlite-delta profile="profiling": docker-compose-down minio-up minio-ready-local minio-local-alias minio-lake-bucket clean-tansu-db (build profile "libsql,delta") (tansu-broker profile "--storage-engine=sqlite://tansu.db" "delta")
+broker-sqlite-delta profile="profiling": docker-compose-down minio-up minio-ready-local minio-local-alias minio-lake-bucket clean-jansu-db (build profile "libsql,delta") (jansu-broker profile "--storage-engine=sqlite://jansu.db" "delta")
 
-broker-sqlite profile="profiling": clean-tansu-db (build profile "libsql") (tansu-broker profile "--silent" "--storage-engine=sqlite://tansu.db")
+broker-sqlite profile="profiling": clean-jansu-db (build profile "libsql") (jansu-broker profile "--silent" "--storage-engine=sqlite://jansu.db")
 
-broker-sqlite-existing profile="profiling": (build profile "libsql") (tansu-broker profile "--silent" "--storage-engine=sqlite://tansu.db")
+broker-sqlite-existing profile="profiling": (build profile "libsql") (jansu-broker profile "--silent" "--storage-engine=sqlite://jansu.db")
 
-broker-sqlite-no-maintenance profile="profiling": clean-tansu-db (build profile "libsql") (tansu-broker profile "--silent" "--storage-engine='sqlite://tansu.db'")
+broker-sqlite-no-maintenance profile="profiling": clean-jansu-db (build profile "libsql") (jansu-broker profile "--silent" "--storage-engine='sqlite://jansu.db'")
 
-broker-sqlite-authentication profile="profiling": (build profile "libsql") (tansu-broker profile "--authentication" "--storage-engine=sqlite://tansu.db")
+broker-sqlite-authentication profile="profiling": (build profile "libsql") (jansu-broker profile "--authentication" "--storage-engine=sqlite://jansu.db")
 
-broker-sqlite-maintenance-1m profile="profiling": clean-tansu-db (build profile "libsql") (tansu-broker profile "--storage-engine=sqlite://tansu.db?maintenance_interval=1m")
+broker-sqlite-maintenance-1m profile="profiling": clean-jansu-db (build profile "libsql") (jansu-broker profile "--storage-engine=sqlite://jansu.db?maintenance_interval=1m")
 
-broker-sqlite-vacuum-into profile="profiling": clean-tansu-db (build profile "libsql") (tansu-broker profile "--storage-engine=sqlite://tansu.db?vacuum_into=snapshot.db")
+broker-sqlite-vacuum-into profile="profiling": clean-jansu-db (build profile "libsql") (jansu-broker profile "--storage-engine=sqlite://jansu.db?vacuum_into=snapshot.db")
 
-s3-up: docker-compose-down minio-up minio-ready-local minio-local-alias minio-tansu-bucket
+s3-up: docker-compose-down minio-up minio-ready-local minio-local-alias minio-jansu-bucket
 
-broker-s3 profile="profiling": (build profile "dynostore") s3-up (tansu-broker profile "--storage-engine=s3://tansu/")
+broker-s3 profile="profiling": (build profile "dynostore") s3-up (jansu-broker profile "--storage-engine=s3://jansu/")
 
-broker-postgres profile="profiling": (build profile "postgres") docker-compose-down db-up (tansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost")
+broker-postgres profile="profiling": (build profile "postgres") docker-compose-down db-up (jansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost")
 
-broker-postgres-existing profile="profiling": (build profile "postgres") (tansu-broker profile "--silent" "--storage-engine=postgres://postgres:postgres@localhost")
+broker-postgres-existing profile="profiling": (build profile "postgres") (jansu-broker profile "--silent" "--storage-engine=postgres://postgres:postgres@localhost")
 
-broker-postgres-local profile="profiling": (build profile "postgres") (tansu-broker profile "--silent" "--storage-engine=postgres://pmorgan@localhost/pmorgan")
+broker-postgres-local profile="profiling": (build profile "postgres") (jansu-broker profile "--silent" "--storage-engine=postgres://pmorgan@localhost/pmorgan")
 
-broker-postgres-authentication profile="profiling": (build profile "postgres") (tansu-broker profile "--authentication" "--storage-engine=postgres://postgres:postgres@localhost")
+broker-postgres-authentication profile="profiling": (build profile "postgres") (jansu-broker profile "--authentication" "--storage-engine=postgres://postgres:postgres@localhost")
 
-broker-postgres-maintenance-1m profile="profiling": (build profile "postgres") (tansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost?maintenance_interval=1m")
+broker-postgres-maintenance-1m profile="profiling": (build profile "postgres") (jansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost?maintenance_interval=1m")
 
 samply-null profile="profiling":
-    cargo build --profile {{ profile }} --bin tansu
-    RUST_LOG=warn samply record ./target/{{ replace(profile, "dev", "debug") }}/tansu --storage-engine=null://sink
+    cargo build --profile {{ profile }} --bin jansu
+    RUST_LOG=warn samply record ./target/{{ replace(profile, "dev", "debug") }}/jansu --storage-engine=null://sink
 
-flamegraph-null profile="profiling": (build profile "default") (flamegraph-tansu-broker profile "--storage-engine=null://sink")
+flamegraph-null profile="profiling": (build profile "default") (flamegraph-jansu-broker profile "--storage-engine=null://sink")
 
-flamegraph-sqlite profile="profiling": (build profile "libsql") clean-tansu-db (flamegraph-tansu-broker profile "--storage-engine=sqlite://tansu.db")
+flamegraph-sqlite profile="profiling": (build profile "libsql") clean-jansu-db (flamegraph-jansu-broker profile "--storage-engine=sqlite://jansu.db")
 
-flamegraph-postgres profile="profiling": (build profile "postgres") docker-compose-down db-up (flamegraph-tansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost")
+flamegraph-postgres profile="profiling": (build profile "postgres") docker-compose-down db-up (flamegraph-jansu-broker profile "--storage-engine=postgres://postgres:postgres@localhost")
 
-flamegraph-memory profile="profiling": (build profile "dynostore") (flamegraph-tansu-broker profile "--storage-engine=memory://tansu/")
+flamegraph-memory profile="profiling": (build profile "dynostore") (flamegraph-jansu-broker profile "--storage-engine=memory://jansu/")
 
-flamegraph-s3 profile="profiling": (build profile "dynostore") docker-compose-down minio-up minio-ready-local minio-local-alias minio-tansu-bucket (flamegraph-tansu-broker profile "--storage-engine=s3://tansu/")
+flamegraph-s3 profile="profiling": (build profile "dynostore") docker-compose-down minio-up minio-ready-local minio-local-alias minio-jansu-bucket (flamegraph-jansu-broker profile "--storage-engine=s3://jansu/")
 
 samply-produce profile="profiling":
     cargo build --profile {{ profile }} --bin bench_produce_v11
@@ -580,13 +580,13 @@ producer-perf-600000: (producer-perf "600000" "1024" "15000000")
 
 producer-perf-1000000: (producer-perf "1000000" "1024" "25000000")
 
-ps-tansu-rss:
-    ps -p $(pgrep tansu) -o rss= | awk '{print $1/1024 " MB"}'
+ps-jansu-rss:
+    ps -p $(pgrep jansu) -o rss= | awk '{print $1/1024 " MB"}'
 
-telemetry-topic-create: (topic-create "telemetry" "--config" "tansu.virtual=true")
+telemetry-topic-create: (topic-create "telemetry" "--config" "jansu.virtual=true")
 
 telemetry-produce-valid profile="dev":
-    echo '{"key": "SK06 YPM", "value": {"latitude":52.930412156530465,"longitude":-4.894550244518114,"altitude":158.06766871179406}}' | target/{{ replace(profile, "dev", "debug") }}/tansu cat produce telemetry
+    echo '{"key": "SK06 YPM", "value": {"latitude":52.930412156530465,"longitude":-4.894550244518114,"altitude":158.06766871179406}}' | target/{{ replace(profile, "dev", "debug") }}/jansu cat produce telemetry
 
 telemetry-consume:
     kafka-console-consumer \

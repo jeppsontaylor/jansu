@@ -13,7 +13,7 @@
     ]
   },
   "profiles": [
-    "tansu-native",
+    "jansu-native",
     "kafka-parity-postgres",
     "kafka-parity-sqlite",
     "kafka-parity-s3-dynostore",
@@ -43,7 +43,7 @@
       "semantic_status": "partial",
       "phase_owner": "07",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -60,31 +60,31 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
-          "tansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
-          "tansu-storage/tests/log_contract.rs::fetch_reads_written_records",
-          "tansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
-          "tansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported",
-          "tansu-storage/tests/produce_exactness.rs::valid_required_acks_are_accepted",
-          "tansu-storage/tests/produce_exactness.rs::invalid_required_acks_is_rejected",
-          "tansu-storage/tests/produce_exactness.rs::unknown_topic_returns_unknown_topic_or_partition",
-          "tansu-storage/tests/produce_exactness.rs::invalid_partition_returns_unknown_topic_or_partition",
-          "tansu-storage/tests/produce_exactness.rs::crc_invalid_is_rejected_without_append",
-          "tansu-storage/tests/produce_exactness.rs::unsupported_compression_is_rejected_without_append",
-          "tansu-storage/tests/produce_exactness.rs::supported_compressions_are_accepted_without_append",
-          "tansu-storage/tests/produce_exactness.rs::all_batches_validated_before_append",
-          "tansu-storage/tests/produce_exactness.rs::batch_length_mismatch_is_rejected_without_append",
-          "tansu-storage/tests/produce_exactness.rs::record_count_mismatch_is_rejected_without_append",
-          "tansu-storage/tests/produce_exactness.rs::invalid_timestamp_is_rejected_without_append",
-          "tansu-storage/tests/produce_exactness.rs::partitions_remain_independent",
-          "tansu-storage/tests/produce_exactness.rs::schema_failure_maps_and_keeps_offsets"
+          "jansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
+          "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
+          "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
+          "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
+          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported",
+          "jansu-storage/tests/produce_exactness.rs::valid_required_acks_are_accepted",
+          "jansu-storage/tests/produce_exactness.rs::invalid_required_acks_is_rejected",
+          "jansu-storage/tests/produce_exactness.rs::unknown_topic_returns_unknown_topic_or_partition",
+          "jansu-storage/tests/produce_exactness.rs::invalid_partition_returns_unknown_topic_or_partition",
+          "jansu-storage/tests/produce_exactness.rs::crc_invalid_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::unsupported_compression_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::supported_compressions_are_accepted_without_append",
+          "jansu-storage/tests/produce_exactness.rs::all_batches_validated_before_append",
+          "jansu-storage/tests/produce_exactness.rs::batch_length_mismatch_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::record_count_mismatch_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::invalid_timestamp_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::partitions_remain_independent",
+          "jansu-storage/tests/produce_exactness.rs::schema_failure_maps_and_keeps_offsets"
         ],
         "differential_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs",
-          "tansu-broker/tests/produce_exactness.rs::api_versions_do_not_advertise_produce",
-          "tansu-broker/tests/produce_exactness.rs::produce_acks_zero_suppresses_wire_response",
-          "tansu-broker/tests/produce_exactness.rs::produce_acks_leader_and_full_isr_return_wire_response",
-          "tansu-broker/tests/produce_exactness.rs::produce_request_versions_decode_across_supported_versions"
+          "jansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs",
+          "jansu-broker/tests/produce_exactness.rs::api_versions_do_not_advertise_produce",
+          "jansu-broker/tests/produce_exactness.rs::produce_acks_zero_suppresses_wire_response",
+          "jansu-broker/tests/produce_exactness.rs::produce_acks_leader_and_full_isr_return_wire_response",
+          "jansu-broker/tests/produce_exactness.rs::produce_request_versions_decode_across_supported_versions"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -105,7 +105,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "06",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -122,11 +122,11 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
-          "tansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
-          "tansu-storage/tests/log_contract.rs::fetch_reads_written_records",
-          "tansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
-          "tansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
+          "jansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
+          "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
+          "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
+          "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
+          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -148,7 +148,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "06",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -165,11 +165,11 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
-          "tansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
-          "tansu-storage/tests/log_contract.rs::fetch_reads_written_records",
-          "tansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
-          "tansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
+          "jansu-storage/tests/log_contract.rs::empty_partition_offsets_are_zero",
+          "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
+          "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
+          "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
+          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -197,7 +197,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "02",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -214,10 +214,10 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-service/tests/route.rs::explicit_api_versions_advertisement"
+          "jansu-service/tests/route.rs::explicit_api_versions_advertisement"
         ],
         "differential_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
+          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -236,9 +236,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -254,8 +254,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -273,9 +286,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -291,8 +304,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -310,9 +336,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -328,8 +354,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -347,9 +386,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -365,8 +404,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -384,9 +436,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -402,8 +454,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -421,9 +486,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -439,8 +504,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -458,9 +536,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -476,8 +554,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -495,9 +586,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -513,8 +604,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -532,9 +636,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -550,8 +654,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -569,9 +686,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -587,8 +704,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -614,7 +744,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "02",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -631,12 +761,12 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-service/tests/route.rs::explicit_api_versions_advertisement",
-          "tansu-service/tests/route.rs::unsupported_api_versions_request_returns_version_zero"
+          "jansu-service/tests/route.rs::explicit_api_versions_advertisement",
+          "jansu-service/tests/route.rs::unsupported_api_versions_request_returns_version_zero"
         ],
         "differential_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_registry_matches_ledger_approved_versions",
-          "tansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
+          "jansu-broker/tests/compatibility_contract.rs::broker_registry_matches_ledger_approved_versions",
+          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
         ],
         "client_tests": {},
         "failure_modes": "untested"
@@ -655,9 +785,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -673,8 +803,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -692,9 +835,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -710,8 +853,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -729,9 +885,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -747,8 +903,21 @@
         "memory": "uncertified"
       },
       "proof": {
-        "unit_tests": [],
-        "differential_tests": [],
+        "unit_tests": [
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::formed_member_session_timeout_triggers_rebalance_and_generation_fencing",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::forming_rebalance_timeout_drops_missing_member_and_allows_survivor_sync",
+          "jansu-broker/src/coordinator/group/administrator/tests.rs::offset_fetch_with_require_stable_during_rebalance_returns_unstable",
+          "jansu-storage/tests/consumer_offsets.rs::dynostore_offset_commit_maintain_deletes_expired_records",
+          "jansu-storage/tests/consumer_offsets.rs::slatedb_offset_commit_maintain_clears_expired_records"
+        ],
+        "differential_tests": [
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::offset_commit_fencing_during_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::lifecycle",
+          "jansu-broker/tests/cg_static.rs::in_memory::join_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::rejoin_with_empty_member_id",
+          "jansu-broker/tests/cg_static.rs::in_memory::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_differential.rs::differential_cg_churn"
+        ],
         "client_tests": {},
         "failure_modes": "untested"
       },
@@ -766,9 +935,9 @@
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
       "semantic_status": "uncertified",
-      "phase_owner": "01",
+      "phase_owner": "10",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -799,13 +968,13 @@
         "min": 0
       },
       "codec_status": "present",
-      "route_status": "not-routed",
+      "route_status": "routed",
       "current_advertised_versions": null,
       "approved_advertised_versions": null,
-      "semantic_status": "unsupported",
+      "semantic_status": "partial",
       "phase_owner": "08",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -814,19 +983,27 @@
       },
       "storage": {
         "postgres": "uncertified",
-        "sqlite": "uncertified",
-        "s3-dynostore": "uncertified",
-        "slatedb": "uncertified",
+        "sqlite": "limited-parity",
+        "s3-dynostore": "limited-parity",
+        "slatedb": "limited-parity",
         "turso": "uncertified",
-        "memory": "uncertified"
+        "memory": "development-test-only"
       },
       "proof": {
-        "unit_tests": [],
+        "unit_tests": [
+          "jansu-storage/tests/offset_for_leader_epoch.rs::libsql_epoch_boundaries_are_recorded_on_produce",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::dynostore_epoch_boundaries_are_recorded_on_produce",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::slatedb_epoch_boundaries_are_recorded_on_produce",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::offset_for_leader_epoch_service_returns_exact_epoch_errors",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::lite_leader_epoch_history_unknown_topition_returns_unknown_topic_or_partition",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::dynostore_epoch_unknown_topition_returns_unknown_topic_or_partition",
+          "jansu-storage/tests/offset_for_leader_epoch.rs::slatedb_epoch_unknown_topition_returns_unknown_topic_or_partition"
+        ],
         "differential_tests": [],
         "client_tests": {},
         "failure_modes": "untested"
       },
-      "notes": "Present in Kafka 4.2 protocol metadata but not routed yet."
+      "notes": "Phase 08: routed through broker but unadvertised. SQLite, DynoStore, and SlateDB now persist epoch 0 at topic creation and record newer produced batch leader epochs as storage history; Fetch/ListOffsets use stored epochs, with broker ListOffsets wire-level mixed-partition decoding still under Phase 08 residual risk."
     },
     {
       "api_key": 24,
@@ -842,7 +1019,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -879,7 +1056,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -916,7 +1093,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -933,8 +1110,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -956,7 +1133,7 @@
       "semantic_status": "unsupported",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -993,7 +1170,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1030,7 +1207,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1067,7 +1244,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1104,7 +1281,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1121,8 +1298,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1144,7 +1321,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1181,7 +1358,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1198,8 +1375,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1221,7 +1398,7 @@
       "semantic_status": "unsupported",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1258,7 +1435,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1275,8 +1452,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1298,7 +1475,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1335,7 +1512,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1352,8 +1529,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1375,7 +1552,7 @@
       "semantic_status": "unsupported",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1412,7 +1589,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1449,7 +1626,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1486,7 +1663,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1523,7 +1700,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1560,7 +1737,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1577,8 +1754,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1600,7 +1777,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1637,7 +1814,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1674,7 +1851,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1711,7 +1888,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1728,8 +1905,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -1751,7 +1928,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1788,7 +1965,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1825,7 +2002,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1862,7 +2039,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1899,7 +2076,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1936,7 +2113,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -1973,7 +2150,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2010,7 +2187,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2047,7 +2224,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2084,7 +2261,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2121,7 +2298,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2158,7 +2335,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2195,7 +2372,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2232,7 +2409,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2269,7 +2446,7 @@
       "semantic_status": "safe-error",
       "phase_owner": "05",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2286,8 +2463,8 @@
       },
       "proof": {
         "unit_tests": [
-          "tansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
-          "tansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
+          "jansu-broker/tests/compatibility_contract.rs::broker_safe_error_routes_return_structured_errors",
+          "jansu-broker/tests/compatibility_contract.rs::route_coverage_report_matches_ledger"
         ],
         "differential_tests": [],
         "client_tests": {},
@@ -2309,7 +2486,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2346,7 +2523,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2383,7 +2560,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2420,7 +2597,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2457,7 +2634,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2494,7 +2671,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2531,7 +2708,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2568,7 +2745,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2605,7 +2782,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2642,7 +2819,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2679,7 +2856,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
@@ -2716,7 +2893,7 @@
       "semantic_status": "uncertified",
       "phase_owner": "01",
       "profiles": {
-        "tansu-native": "gray",
+        "jansu-native": "gray",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",

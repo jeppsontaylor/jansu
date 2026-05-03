@@ -1,0 +1,40 @@
+# Phase 01 - Compatibility Contract Log
+
+## Date
+
+- 2026-05-02
+
+## Phase File
+
+- `tips/phases/01-compatibility-contract.md`
+
+## Intent
+
+- Preserve the compatibility contract as the root proof system for Kafka API, route, advertised-version, storage, and phase-log claims.
+
+## Files Touched
+
+- `tips/phases/01-compatibility-contract.md`
+- `docs/compatibility/kafka-4.2-ledger.json`
+- `jansu-broker/tests/compatibility_contract.rs`
+- `phase-logs/index.json`
+
+## Ledger Rows Touched
+
+- Phase-owned rows listed in `phase-logs/index.json`.
+
+## Tests Added
+
+- `jansu-broker/tests/compatibility_contract.rs`
+
+## Verification Commands
+
+- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+
+## Outcomes
+
+- Historical phase work established the compatibility ledger and contract tests.
+
+## Residual Risks
+
+- Older activity was not fully backfilled into attempt logs.

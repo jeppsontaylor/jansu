@@ -11,9 +11,9 @@ Goal: Prove the Kafka replacement story through ecosystem certification, perform
 Current code anchors:
 - `README.md`, `docs/`, and `demo/` are the user-facing migration and usage surfaces.
 - `compose.yaml`, `Dockerfile`, `example.env`, and `justfile` are the local operations baseline.
-- `etc/prometheus.yaml`, `etc/grafana/`, `tansu-otel/`, and tracing/metrics usage are observability anchors.
-- `tansu-perf/` is the performance benchmark seed.
-- `tansu-cli/`, `tansu-topic/`, `tansu-cat/`, and `tansu-proxy/` are operational tooling surfaces.
+- `etc/prometheus.yaml`, `etc/grafana/`, `jansu-otel/`, and tracing/metrics usage are observability anchors.
+- `jansu-perf/` is the performance benchmark seed.
+- `jansu-cli/`, `jansu-topic/`, `jansu-cat/`, and `jansu-proxy/` are operational tooling surfaces.
 - Phase 04 differential lab artifacts and the Phase 01 compatibility ledger become release evidence.
 
 Implementation steps:
@@ -22,7 +22,7 @@ Implementation steps:
 - Benchmark producer throughput/latency, consumer throughput/latency, group rebalance latency, transaction latency, compaction cost, storage-engine throughput, CPU, RAM, file/object/DB growth, and tail latency.
 - Run chaos tests for broker kill, storage stall, storage disconnect, partial write, network interruption, client retry storms, rolling upgrades, and config changes.
 - Finish operational packaging: Docker image, Helm chart or manifests, health/readiness, backup/restore, storage migrations, rolling upgrades, metrics dashboards, logs, and alert examples.
-- Write migration guides for Kafka to Tansu by profile, including prerequisites, incompatibilities, bootstrap change, validation, rollback, and mixed operation.
+- Write migration guides for Kafka to Jansu by profile, including prerequisites, incompatibilities, bootstrap change, validation, rollback, and mixed operation.
 - Add release gates that require the compatibility ledger, differential lab, performance reports, and ops docs to agree.
 
 Tests:
@@ -30,7 +30,7 @@ Tests:
 - Add performance regression jobs with documented hardware/storage profiles.
 - Add chaos test jobs for broker/storage/client failures.
 - Add packaging smoke tests for Docker, compose, and deployment manifests.
-- Add migration dry-run tests from Kafka-exported data or MirrorMaker flows into Tansu.
+- Add migration dry-run tests from Kafka-exported data or MirrorMaker flows into Jansu.
 
 Acceptance gate: A migration guide can honestly say when changing only `bootstrap.servers` is supported, with a public matrix proving the client, protocol, feature, and storage profile boundaries.
 
