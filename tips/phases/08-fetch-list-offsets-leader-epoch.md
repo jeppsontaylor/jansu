@@ -77,3 +77,9 @@ With **Phase 04**, **Phase 07**, and **Phase 10** marked complete in `MASTER_PLA
 ## Supplement 2026-05-05 — Fetch ReadCommitted (non-txn) proof
 
 - **`jansu-storage/tests/fetch.rs::phase08::fetch_read_committed_matches_uncommitted_when_no_transactions`** asserts `FetchService` returns identical record counts for **ReadUncommitted** vs **ReadCommitted** on dynostore memory when there are no open transactions (LSO == HWM). This does **not** certify transactional read_committed or aborted-txn filtering (Phase 12 / broader Phase 08 backlog).
+
+## Supplement 2026-05-04 — ListOffsets returned-offset leader epoch proof
+
+- `ListOffsetsService` now uses `leader_epoch_for_offset` for successful responses, so the response `leader_epoch` reflects the epoch active at the returned offset instead of always reporting the current partition epoch.
+- `jansu-storage/tests/list_offsets.rs::response_frame_round_trips_for_produced_leader_epoch` now asserts both sides of the epoch boundary after producing epoch 0 and epoch 1 batches: `Latest` returns offset `2` with leader epoch `1`, while `Earliest` returns offset `0` with leader epoch `0`.
+- This tightens API key **2** unit proof without changing ApiVersions advertisement; ListOffsets remains unadvertised until read_committed/LSO, truncation/recovery, and broader client/differential proof satisfy the acceptance gate.

@@ -22,7 +22,8 @@ use rama::{Context, Service};
 use tracing::{debug, error, instrument};
 
 use super::leader_epoch::{
-    current_leader_epoch_error, leader_epoch_history, leader_epoch_or_unknown,
+    current_leader_epoch_error, leader_epoch_for_offset, leader_epoch_history,
+    leader_epoch_or_unknown,
 };
 use crate::{Error, LeaderEpochRecord, Result, Storage, Topition};
 
@@ -191,7 +192,7 @@ where
 
                     let request = ListOffset::try_from(partition.timestamp)?;
 
-                    histories.insert(topition.clone(), history);
+                    _ = histories.insert(topition.clone(), history);
                     pending.push(PendingListOffset {
                         topic_slot,
                         partition_slot,
@@ -243,7 +244,10 @@ where
                             .unwrap_or_default();
 
                         let epoch = if offset.error_code() == ErrorCode::None {
-                            leader_epoch_or_unknown(history)
+                            offset.offset().map_or_else(
+                                || leader_epoch_or_unknown(history),
+                                |offset| leader_epoch_for_offset(history, offset),
+                            )
                         } else {
                             -1
                         };

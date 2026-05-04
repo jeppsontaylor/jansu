@@ -198,7 +198,8 @@
           "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
           "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
           "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
-          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
+          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported",
+          "jansu-storage/tests/list_offsets.rs::response_frame_round_trips_for_produced_leader_epoch"
         ],
         "differential_tests": [
           "jansu-broker/tests/differential_lab.rs::differential_listoffsets_latest_and_fetch_consume_after_produce"
@@ -206,7 +207,7 @@
         "client_tests": {},
         "failure_modes": "partial"
       },
-      "notes": "Phase 06 storage contract slice plus Phase 08 evidence: external differential ListOffsets v9 **latest** and **earliest** offsets after produce match Kafka 4.2 (see differential_lab test). Routed API remains uncertified for advertisement until read_committed/LSO, truncation, and broader matrix proof land."
+      "notes": "Phase 06 storage contract slice plus Phase 08 evidence: external differential ListOffsets v9 **latest** and **earliest** offsets after produce match Kafka 4.2 (see differential_lab test). Storage ListOffsets regression now asserts latest returns the current produced epoch while earliest returns the epoch active at offset 0 after multiple produced epochs. Routed API remains uncertified for advertisement until read_committed/LSO, truncation, and broader matrix proof land."
     },
     {
       "api_key": 3,

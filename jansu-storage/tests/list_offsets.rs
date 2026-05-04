@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::{Error, init_tracing};
+use crate::common::{Error, create_topic, init_tracing};
 use bytes::Bytes;
 use jansu_sans_io::{
     ApiKey as _, Body, ErrorCode, Frame, Header, IsolationLevel, ListOffset, ListOffsetsRequest,
     list_offsets_request::{ListOffsetsPartition, ListOffsetsTopic},
     list_offsets_response::{ListOffsetsResponse, ListOffsetsTopicResponse},
-    record::{Record, deflated, inflated},
+    record::{Record, inflated},
 };
 use jansu_storage::{ListOffsetsService, StorageContainer, Topition};
 use rama::{Context, Layer as _, Service, layer::MapStateLayer};
@@ -191,7 +191,7 @@ async fn response_frame_round_trips_for_exact_mixed_partition_errors() -> Result
         .build()
         .await?;
 
-    crate::common::register_broker(&*storage, CLUSTER_ID, NODE_ID).await?;
+    common::register_broker(&*storage, CLUSTER_ID, NODE_ID).await?;
 
     let service_storage = storage.clone();
     let service =
@@ -265,12 +265,14 @@ async fn response_frame_round_trips_for_produced_leader_epoch() -> Result<(), Er
         .build()
         .await?;
 
-    crate::common::register_broker(&*storage, CLUSTER_ID, NODE_ID).await?;
+    common::register_broker(&*storage, CLUSTER_ID, NODE_ID).await?;
 
     let service_storage = storage.clone();
     let service =
         MapStateLayer::new(move |_| service_storage.clone()).into_layer(ListOffsetsService);
     let topic = "abcba";
+
+    _ = create_topic(&*storage, topic, 1).await?;
 
     let topition = Topition::new(topic, 0);
     let epoch_0 = inflated::Batch::builder()
@@ -310,6 +312,10 @@ async fn response_frame_round_trips_for_produced_leader_epoch() -> Result<(), Er
         .await?;
 
     let topic = response.topics.as_deref().unwrap()[0].clone();
+    let partition = topic.partitions.as_deref().unwrap().first().unwrap();
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(partition.error_code)?);
+    assert_eq!(Some(2), partition.offset);
+    assert_eq!(Some(1), partition.leader_epoch);
     let body = Body::ListOffsetsResponse(
         ListOffsetsResponse::default()
             .throttle_time_ms(Some(0))
@@ -318,6 +324,48 @@ async fn response_frame_round_trips_for_produced_leader_epoch() -> Result<(), Er
 
     let encoded = Frame::response(
         Header::Response { correlation_id: 0 },
+        body.clone(),
+        ListOffsetsRequest::KEY,
+        9,
+    )?;
+    let decoded = Frame::response_from_bytes(&encoded[..], ListOffsetsRequest::KEY, 9)?;
+
+    assert_eq!(body, decoded.body);
+
+    let earliest_response = service
+        .serve(
+            Context::default(),
+            ListOffsetsRequest::default()
+                .isolation_level(Some(IsolationLevel::ReadUncommitted.into()))
+                .replica_id(-1)
+                .topics(Some(
+                    [ListOffsetsTopic::default()
+                        .name(topic.name.clone())
+                        .partitions(Some(
+                            [ListOffsetsPartition::default()
+                                .partition_index(0)
+                                .timestamp(ListOffset::Earliest.try_into()?)
+                                .max_num_offsets(Some(1))]
+                            .into(),
+                        ))]
+                    .into(),
+                )),
+        )
+        .await?;
+
+    let topic = earliest_response.topics.as_deref().unwrap()[0].clone();
+    let partition = topic.partitions.as_deref().unwrap().first().unwrap();
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(partition.error_code)?);
+    assert_eq!(Some(0), partition.offset);
+    assert_eq!(Some(0), partition.leader_epoch);
+    let body = Body::ListOffsetsResponse(
+        ListOffsetsResponse::default()
+            .throttle_time_ms(Some(0))
+            .topics(Some(vec![ListOffsetsTopicResponse::from(topic.clone())])),
+    );
+
+    let encoded = Frame::response(
+        Header::Response { correlation_id: 1 },
         body.clone(),
         ListOffsetsRequest::KEY,
         9,
