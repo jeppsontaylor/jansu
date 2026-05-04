@@ -3,6 +3,7 @@
 ## Date
 
 - 2026-05-02
+- 2026-05-04
 
 ## Phase File
 
@@ -11,30 +12,89 @@
 ## Intent
 
 - Preserve the compatibility contract as the root proof system for Kafka API, route, advertised-version, storage, and phase-log claims.
+- Close the historical Phase 01 logging residual now that the compatibility ledger, contract tests, manifest coverage, and resolved audit entry are all in place.
 
 ## Files Touched
 
 - `tips/phases/01-compatibility-contract.md`
 - `docs/compatibility/kafka-4.2-ledger.json`
 - `jansu-broker/tests/compatibility_contract.rs`
+- `phase-logs/01-compatibility-contract.md.log`
 - `phase-logs/index.json`
+- `phase-logs/attempts/01-compatibility-contract/20260504-120000-gpt-5-5-pro.md`
+- `phase-logs/README.md`
+- `AUDIT.md`
 
 ## Ledger Rows Touched
 
-- Phase-owned rows listed in `phase-logs/index.json`.
+- `api_key 24`
+- `api_key 25`
+- `api_key 27`
+- `api_key 28`
+- `api_key 29`
+- `api_key 30`
+- `api_key 32`
+- `api_key 34`
+- `api_key 36`
+- `api_key 38`
+- `api_key 39`
+- `api_key 40`
+- `api_key 41`
+- `api_key 42`
+- `api_key 44`
+- `api_key 45`
+- `api_key 46`
+- `api_key 48`
+- `api_key 49`
+- `api_key 50`
+- `api_key 51`
+- `api_key 55`
+- `api_key 57`
+- `api_key 60`
+- `api_key 61`
+- `api_key 64`
+- `api_key 65`
+- `api_key 66`
+- `api_key 68`
+- `api_key 69`
+- `api_key 71`
+- `api_key 75`
+- `api_key 76`
+- `api_key 77`
+- `api_key 78`
+- `api_key 79`
+- `api_key 80`
+- `api_key 81`
+- `api_key 83`
+- `api_key 84`
+- `api_key 85`
+- `api_key 86`
+- `api_key 87`
 
 ## Tests Added
 
 - `jansu-broker/tests/compatibility_contract.rs`
+- `jansu-broker/tests/compatibility_contract.rs::ledger_covers_every_protocol_request`
+- `jansu-broker/tests/compatibility_contract.rs::ledger_covers_every_current_route`
+- `jansu-broker/tests/compatibility_contract.rs::no_compatible_status_without_proof`
+- `jansu-broker/tests/compatibility_contract.rs::ledger_has_required_profiles_and_storage_tiers`
+- `jansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs`
+- `jansu-broker/tests/compatibility_contract.rs::broker_registry_matches_ledger_approved_versions`
+- `jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions`
 
 ## Verification Commands
 
-- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase01-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `cargo fmt --all --check`
+- `git diff --check`
 
 ## Outcomes
 
 - Historical phase work established the compatibility ledger and contract tests.
+- Phase 01 now has a structured canonical log entry, an attempt log for closure hardening, and a `complete` manifest status.
+- `AUDIT-013` remains resolved and now explicitly records the Phase 01 log backfill.
+- `phase-logs/README.md` documents the `complete` status already accepted by the compatibility-contract test.
 
 ## Residual Risks
 
-- Older activity was not fully backfilled into attempt logs.
+- None.

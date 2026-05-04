@@ -8,7 +8,7 @@ Each manifest entry tracks one `tips/phases/*.md` file with these fields:
 
 - `phase`: two-digit phase number as a string.
 - `phase_file`: phase document path.
-- `status`: one of `legacy-unlogged`, `legacy-complete`, or `in-progress`.
+- `status`: one of `legacy-unlogged`, `legacy-complete`, `in-progress`, or `complete`.
 - `log_file`: canonical phase-log path. Every phase has one.
 - `attempt_log_dir`: directory for per-attempt logs for the phase.
 - `ledger_api_keys`: ledger API keys owned by that phase.
@@ -19,6 +19,7 @@ Each manifest entry tracks one `tips/phases/*.md` file with these fields:
 `legacy-complete` is for older phases that already have logs, but those logs are still in the historical freeform format.
 `legacy-unlogged` is for older phase docs that only have a placeholder canonical log.
 `in-progress` is for a phase that is being actively tracked with the current structured log format.
+`complete` is for a phase whose acceptance gate is closed and whose canonical log satisfies the structured log format.
 
 ## Attempt Logs
 

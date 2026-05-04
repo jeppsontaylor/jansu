@@ -4,7 +4,7 @@
     {
       "phase": "01",
       "phase_file": "tips/phases/01-compatibility-contract.md",
-      "status": "legacy-unlogged",
+      "status": "complete",
       "log_file": "phase-logs/01-compatibility-contract.md.log",
       "attempt_log_dir": "phase-logs/attempts/01-compatibility-contract",
       "ledger_api_keys": [
@@ -53,13 +53,22 @@
         87
       ],
       "primary_paths": [
-        "tips/phases/01-compatibility-contract.md"
+        "tips/phases/01-compatibility-contract.md",
+        "phase-logs/01-compatibility-contract.md.log",
+        "phase-logs/attempts/01-compatibility-contract/20260504-120000-gpt-5-5-pro.md",
+        "docs/compatibility/kafka-4.2-ledger.json",
+        "jansu-broker/tests/compatibility_contract.rs",
+        "phase-logs/index.json",
+        "phase-logs/README.md",
+        "AUDIT.md"
       ],
       "verification_commands": [
-        "cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture"
+        "env CARGO_TARGET_DIR=/tmp/jansu-verify-phase01-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture",
+        "cargo fmt --all --check",
+        "git diff --check"
       ],
       "residual_risks": [
-        "Historical activity was not backfilled into a structured log."
+        "None."
       ]
     },
     {
