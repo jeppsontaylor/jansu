@@ -388,8 +388,6 @@ fn into_record_data(records: &[Record], compression: Compression) -> Result<Byte
                 .map(Bytes::from)
                 .map_err(|e| Error::from(std::io::Error::from(e)))
         }
-
-        unexpected => Err(Error::UnexpectedType(format!("{unexpected:?}",))),
     }
 }
 
