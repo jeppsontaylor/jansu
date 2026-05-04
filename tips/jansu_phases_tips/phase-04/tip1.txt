@@ -1,0 +1,104 @@
+I treated **Phase 04** as the proof-infrastructure blocker: finish the differential Kafka lab so later phases can turn routed/unit-tested behavior into ledger-backed Kafka compatibility claims. The repo’s own contract requires ledger proof for compatibility claims, and `AUDIT-012` is currently blocked specifically because the stable Kafka harness/client matrix is missing.  
+
+I produced the complete implementation package here:
+
+[Download the Phase 04 full solution pack](sandbox:/mnt/data/phase04_solution_pack.md)
+
+## Core conclusion
+
+Phase 04 should **not** mark Produce/Fetch/ListOffsets as compatible by itself. It should make the proof pipeline real. That matters because the current broker advertises only `ApiVersions` and `Metadata`, while the storage service routes many more APIs including `Produce`, `Fetch`, `ListOffsets`, and `OffsetForLeaderEpoch`.  
+
+That is also consistent with the existing Produce exactness test surface, which explicitly asserts that Produce is still not advertised. 
+
+## What the solution pack adds
+
+The pack contains full file-level changes for:
+
+1. **New Rust crate: `jansu-differential`**
+   A reusable differential lab crate that:
+
+   * starts an in-process Jansu broker,
+   * connects to Apache Kafka and Jansu using `librdkafka`,
+   * captures `ApiVersions`,
+   * runs smoke workloads,
+   * normalizes observations,
+   * classifies pass/fail/known-gap outcomes,
+   * writes JSON reports,
+   * includes a ledger gate to prevent unproven advertised/compatible claims.
+
+2. **Kafka 4.2 reference environment**
+   Adds `compose.differential.yaml` using the official `apache/kafka:4.2.0` image. Kafka 4.2.0 is the current ledger baseline in the repo, and Apache’s own downloads page lists `apache/kafka:4.2.0` as the Docker image for that release.  ([Apache Kafka][1])
+
+3. **Justfile integration**
+   Adds durable commands:
+
+   ```bash
+   just differential-up
+   just differential-smoke
+   just differential-ledger-gate
+   just differential-ci
+   just differential-down
+   ```
+
+4. **CI workflow**
+   Adds `.github/workflows/differential-kafka-lab.yml` so the lab runs in CI/manual mode and uploads report artifacts.
+
+5. **Report schema and docs**
+   Adds:
+
+   * `docs/compatibility/differential-kafka-lab.md`
+   * `docs/compatibility/differential-report.schema.json`
+
+6. **Compatibility-contract hardening**
+   Adds a contract test requiring Phase 04 lab paths, commands, and docs to be present in `phase-logs/index.json`.
+
+7. **Phase bookkeeping**
+   Updates:
+
+   * `AUDIT.md`: resolves `AUDIT-012` once the harness is merged.
+   * `phase-logs/index.json`: changes Phase 04 to `in-progress`/active structured tracking with primary paths and verification commands.
+   * `phase-logs/04-differential-kafka-lab.md.log`: replaces placeholder with structured log.
+   * `phase-logs/attempts/04-differential-kafka-lab/...`: adds the attempt log.
+   * `tips/phases/04-differential-kafka-lab.md`: clarifies the final acceptance boundary.
+
+## The validation sequence
+
+After applying the patch, run:
+
+```bash
+cargo fmt --all --check
+cargo test -p jansu-differential --test report_contract --all-features -- --nocapture
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+just differential-ci
+```
+
+For manual inspection:
+
+```bash
+just differential-up
+cargo run -p jansu-differential -- smoke \
+  --kafka-bootstrap 127.0.0.1:19092 \
+  --report-dir target/differential/manual \
+  --require-green=false
+cargo run -p jansu-differential -- ledger-gate \
+  --report target/differential/manual/differential-report.json \
+  --ledger docs/compatibility/kafka-4.2-ledger.json
+just differential-down
+```
+
+## Expected current outcome
+
+The first green Phase 04 outcome is:
+
+* `ApiVersions` differential proof is captured.
+* Jansu’s advertised versions remain ledger-gated.
+* Produce/Fetch/ListOffsets differences are recorded as **known gaps**, not silently ignored.
+* The ledger gate fails only if the repo claims/advertises compatibility without matching differential proof.
+* CI publishes differential JSON artifacts.
+
+That finishes Phase 04 because the Phase 04 acceptance gate is a reusable Kafka-vs-Jansu proof lab, not full semantic parity for every later API. The phase document’s stated acceptance gate is that CI can compare Jansu against real Kafka for advertised APIs and publish results that validate or update the compatibility ledger. 
+
+The only thing I could not do here was run Cargo against a local checkout, because the execution sandbox could not network-clone the repository. I inspected the canonical files and Phase 04-relevant code paths through the GitHub connector and built the complete implementation package with validation commands included.
+
+[1]: https://kafka.apache.org/community/downloads/?utm_source=chatgpt.com "Downloads | Apache Kafka"
+

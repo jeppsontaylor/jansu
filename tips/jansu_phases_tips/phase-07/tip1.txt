@@ -1,0 +1,1044 @@
+Here is the complete Phase 07 finish package I would implement. I focused on the Phase 07-relevant code paths: `MASTER_PLAN.md`, `AUDIT.md`, the Phase 07 doc/log/manifest, the compatibility ledger, broker routing, `ProduceService`, storage traits/backends, broker wire suppression, and the existing Produce exactness tests. I could not run a local clone because shell DNS resolution to GitHub failed, so this is a source-inspection implementation plan rather than a tested PR.
+
+## Phase 07 target
+
+**Phase 07 is not “just make Produce return `NONE`.”** The phase doc requires exact non-transactional Produce behavior before idempotence and transactions are claimed: valid/invalid acks, partition/topic validation, CRC/magic/timestamp/compression validation, size checks, per-partition error mapping, no mutation before validation failure, `acks=0` wire silence, and Java/librdkafka proof before advertisement. The audit also keeps Produce unadvertised until stable client/differential proof exists.  
+
+Current repo state is a strong partial implementation: API key 0 is routed, `ProduceService` validates acks and several batch invariants, broker tests prove `acks=0` suppression and v0..v11 decode, and the ledger explicitly marks Produce as routed but unadvertised/partial.   
+
+One big compatibility gap needs to be called out: the repo ledger says local Produce descriptors max at v11, but Kafka 4.2 documents Produce v12 and v13; v13 switches request/response topic identity from topic name to topic ID. For a “100% Kafka replacement” target, Phase 07 must either update `jansu-sans-io` to Kafka 4.2 Produce v13 or explicitly cap advertisement to v11 and record that as a compatibility limitation. I would update to v13. ([Apache Kafka][1])
+
+A second critical scope issue: Kafka 4.2 producer defaults enable idempotence, require `acks=all`, and default `acks` to `all`; Phase 07 explicitly leaves idempotent producer semantics to Phase 11. So Phase 07 can be closed only as **normal non-idempotent Produce exactness** unless Phase 11’s idempotent state machine is pulled forward. ([Apache Kafka][2])
+
+---
+
+## Final Phase 07 definition of done
+
+Phase 07 is done when all of these are true:
+
+1. **Protocol coverage**
+
+   * `ProduceRequest` and `ProduceResponse` schemas support Kafka 4.2 Produce v0..v13.
+   * If v12/v13 are not added, the ledger must say “compatible only through v11,” and `ApiVersions` must advertise only v0..v11.
+   * Response shape is version-correct: v5+ has `log_start_offset`, v8+ has record errors/error message, v10+ has tagged current-leader/node-endpoints, and v13 uses `topic_id`.
+
+2. **Broker advertisement**
+
+   * `jansu_broker::service::advertised_versions()` advertises Produce only after differential/client proof is checked into the ledger.
+   * The compatibility contract continues to enforce that advertised versions exactly match ledger-approved versions. The current contract already requires approved/current advertised versions to match. 
+
+3. **Non-idempotent Produce semantics**
+
+   * `acks` accepts only `0`, `1`, and `-1`.
+   * `acks=0` appends if possible but sends no wire response.
+   * `acks=1` responds after leader-local append.
+   * `acks=-1` behaves as `acks=all`; in the current single-node/no-replica model, this is success only when the topic’s effective ISR/min-ISR policy is satisfied.
+   * Idempotent/transactional batches are rejected truthfully unless Phase 11/12 state is present and certified.
+
+4. **Validation before append**
+
+   * Topic/partition exists.
+   * Caller is authorized, or the configured auth layer is explicitly allow-all.
+   * Request/batch/message limits are enforced.
+   * Record batch magic, CRC, batch length, offset deltas, record count, timestamps, and compression are validated before append.
+   * Supported producer compression matrix includes `none`, `gzip`, `snappy`, `lz4`, and `zstd`; Kafka producer docs list those valid compression values. ([Apache Kafka][2])
+   * Unsupported compression or malformed compressed payloads fail without append.
+
+5. **Per-partition exactness**
+
+   * One bad partition must not poison unrelated partitions in the same request.
+   * One bad batch in a partition prevents append for that partition.
+   * All successful partition offsets are contiguous and stable.
+
+6. **Storage mutation safety**
+
+   * Schema validation failures must not advance offsets, watermarks, producer state, or lake-sink state.
+   * DynoStore’s lake-sink branch must move schema validation before watermark mutation; today that branch increments watermark before schema validation, which violates the Phase 07 requirement. 
+
+7. **Client proof**
+
+   * Java producer proof and librdkafka proof are checked in.
+   * Differential Kafka proof compares Jansu responses to Kafka 4.2 for success and failure cases.
+   * The ledger row for API key 0 points to those tests and records the exact advertised range/scope. 
+
+---
+
+## Required code changes
+
+### 1. Update protocol schemas to Kafka 4.2 Produce v13
+
+**Files**
+
+* `jansu-sans-io/...` generated protocol descriptor source
+* generated `ProduceRequest`, `ProduceResponse`, `TopicProduceData`, `TopicProduceResponse`
+* `docs/compatibility/kafka-4.2-ledger.json`
+* `jansu-broker/tests/compatibility_contract.rs`
+
+**Required model change**
+
+Add topic-ID-aware Produce topic data.
+
+```rust
+pub enum ProduceTopicIdentity {
+    Name(String),
+    Id([u8; 16]),
+}
+
+impl ProduceTopicIdentity {
+    pub fn topic_id(&self) -> Option<[u8; 16]> {
+        match self {
+            Self::Id(id) => Some(*id),
+            Self::Name(_) => None,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Name(name) => Some(name.as_str()),
+            Self::Id(_) => None,
+        }
+    }
+}
+```
+
+For v0..v12, request topic identity is `name`; for v13, it is `topic_id`. Kafka 4.2 documents Produce v13 as `topic_data => topic_id [partition_data]` and response v13 as `responses => topic_id [partition_responses]`. ([Apache Kafka][1])
+
+**Compatibility contract update**
+
+Current contract hard-codes local descriptor rows and requires all advertised APIs to match ledger-approved versions. Keep that invariant, but after schema update change API key 0 ledger row:
+
+```json
+{
+  "api_key": 0,
+  "name": "ProduceRequest",
+  "descriptor_versions": { "min": 0, "max": 13 },
+  "codec_status": "present",
+  "route_status": "routed",
+  "current_advertised_versions": { "min": 0, "max": 13 },
+  "approved_advertised_versions": { "min": 0, "max": 13 },
+  "semantic_status": "compatible",
+  "phase_owner": "07",
+  "proof": {
+    "unit_tests": [
+      "jansu-storage/tests/produce_exactness.rs::...",
+      "jansu-broker/tests/produce_exactness.rs::..."
+    ],
+    "differential_tests": [
+      "jansu-broker/tests/produce_differential.rs::kafka42_non_idempotent_matrix",
+      "jansu-broker/tests/produce_client_java.rs::java_non_idempotent_producer_matrix",
+      "jansu-broker/tests/produce_client_librdkafka.rs::librdkafka_non_idempotent_producer_matrix"
+    ],
+    "client_tests": {
+      "java": "Kafka 4.2 producer, enable.idempotence=false",
+      "librdkafka": "librdkafka producer, enable.idempotence=false"
+    },
+    "failure_modes": "tested"
+  }
+}
+```
+
+The compatibility test currently asserts `failure_modes == "untested"` for every row, so finishing Phase 07 requires relaxing that assertion to allow `"tested"` for API key 0. 
+
+---
+
+### 2. Advertise Produce only after proof lands
+
+**File**
+
+`jansu-broker/src/service.rs`
+
+Current broker advertisement includes only `ApiVersions` and `Metadata`; that matches the current ledger and broker tests that assert Produce is not advertised.  
+
+Patch after proof:
+
+```rust
+use jansu_sans_io::{ApiKey as _, ApiVersionsRequest, MetadataRequest, ProduceRequest};
+
+const PRODUCE_MIN_VERSION: i16 = 0;
+const PRODUCE_MAX_VERSION: i16 = 13; // use 11 only if v12/v13 are intentionally not implemented
+
+pub fn advertised_versions() -> BTreeMap<i16, ApiVersionRange> {
+    BTreeMap::from([
+        (
+            ApiVersionsRequest::KEY,
+            ApiVersionRange {
+                min_version: 0,
+                max_version: 4,
+            },
+        ),
+        (
+            MetadataRequest::KEY,
+            ApiVersionRange {
+                min_version: 12,
+                max_version: 12,
+            },
+        ),
+        (
+            ProduceRequest::KEY,
+            ApiVersionRange {
+                min_version: PRODUCE_MIN_VERSION,
+                max_version: PRODUCE_MAX_VERSION,
+            },
+        ),
+    ])
+}
+```
+
+The existing `broker_registry_matches_ledger_approved_versions` test should pass only after the ledger row is updated. 
+
+---
+
+### 3. Fix request-size enforcement in the TCP layer
+
+Kafka’s protocol docs say the server has a configurable maximum request size and oversized requests result in disconnect. The current `TcpBytesService::wait` condition appears reversed: it errors when `maximum_frame_size > frame_length(size)`, which rejects smaller frames instead of larger ones. ([Apache Kafka][1]) 
+
+**File**
+
+`jansu-service/src/stream.rs`
+
+Patch:
+
+```rust
+if maximum_frame_size.is_some_and(|maximum_frame_size| frame_length(size) > maximum_frame_size) {
+    return Err(Into::into(Error::FrameTooBig(frame_length(size))));
+}
+```
+
+Add tests:
+
+```rust
+#[tokio::test]
+async fn tcp_frame_allows_frame_below_maximum() { /* max=1024, frame=512 */ }
+
+#[tokio::test]
+async fn tcp_frame_rejects_frame_above_maximum() { /* max=512, frame=1024 */ }
+```
+
+---
+
+### 4. Centralize `acks=0` response suppression
+
+Current code suppresses `acks=0` in both `BytesFrameService` and `TcpBytesService`, which works but duplicates parsing and makes failures harder to reason about.  
+
+Keep suppression in `BytesFrameService`, because it has the decoded frame and response serialization context. Change TCP to treat an empty response as “nothing to write”:
+
+```rust
+let response = self.process(attributes, ctx, request).await?;
+
+if response.is_empty() {
+    debug!("inner service returned empty response; nothing written");
+    return Ok(());
+}
+
+self.write(req, response).await
+```
+
+Then keep the existing broker test and add a real-storage assertion:
+
+```rust
+#[tokio::test]
+async fn produce_acks_zero_appends_but_suppresses_wire_response() -> Result<()> {
+    let topic = alphanumeric_string(15);
+    let storage = storage_with_topic(&topic).await?;
+    let broker = broker(storage.clone())?;
+
+    let response = broker
+        .serve(
+            Context::default(),
+            produce_request(&topic, Ack::None.into(), b"silent", 11)?,
+        )
+        .await?;
+
+    assert!(response.is_empty());
+
+    let stage = storage
+        .offset_stage(&Topition::new(topic.as_str(), 0))
+        .await
+        .map_err(Error::from)?;
+
+    assert_eq!(1, stage.high_watermark());
+    Ok(())
+}
+```
+
+---
+
+### 5. Replace `ProduceService` with an explicit plan/validate/append flow
+
+**File**
+
+`jansu-storage/src/service/produce.rs`
+
+Current `ProduceService` already validates acks, topic metadata, partitions, CRC, magic, timestamps, count/delta, and validates all batches in a partition before appending. Keep that structure, but make it explicit and extend it for limits, topic IDs, ISR policy, response fields, authorization, and idempotence boundaries. 
+
+Core structure:
+
+```rust
+#[derive(Clone, Debug)]
+struct ProduceLimits {
+    max_request_bytes: usize,
+    max_message_bytes: usize,
+    max_record_batch_bytes: usize,
+    timestamp_before_max_ms: Option<i64>,
+    timestamp_after_max_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+struct ValidatedBatch {
+    batch: deflated::Batch,
+    record_count: i32,
+    encoded_bytes: usize,
+    first_timestamp_ms: i64,
+    max_timestamp_ms: i64,
+    attributes: BatchAttribute,
+}
+
+#[derive(Clone, Debug)]
+struct ProducePartitionPlan {
+    topition: Topition,
+    batches: Vec<ValidatedBatch>,
+}
+
+fn valid_required_acks(acks: i16) -> bool {
+    matches!(acks, -1 | 0 | 1)
+}
+```
+
+Topic resolution must understand name and topic ID:
+
+```rust
+async fn resolve_produce_topic<S>(
+    storage: &S,
+    identity: &ProduceTopicIdentity,
+) -> Result<ResolvedTopic>
+where
+    S: Storage + ?Sized,
+{
+    let topic_id = match identity {
+        ProduceTopicIdentity::Name(name) => TopicId::Name(name.clone()),
+        ProduceTopicIdentity::Id(id) => TopicId::Id(uuid::Uuid::from_bytes(*id)),
+    };
+
+    let metadata = storage.metadata(Some(&[topic_id])).await?;
+    let Some(topic) = metadata.topics().first() else {
+        return Err(Error::Api(match identity {
+            ProduceTopicIdentity::Name(_) => ErrorCode::UnknownTopicOrPartition,
+            ProduceTopicIdentity::Id(_) => ErrorCode::UnknownTopicId,
+        }));
+    };
+
+    Ok(ResolvedTopic::from_metadata(topic)?)
+}
+```
+
+Batch validation should be a pure function. It must not call storage and must not mutate anything:
+
+```rust
+fn validate_batch_exact(
+    batch: &deflated::Batch,
+    limits: &ProduceLimits,
+) -> Result<ValidatedBatch, ErrorCode> {
+    let attributes = BatchAttribute::try_from(batch.attributes)
+        .map_err(|_| ErrorCode::UnsupportedCompressionType)?;
+
+    if batch.magic != 2 {
+        return Err(ErrorCode::InvalidRecord);
+    }
+
+    if batch.base_timestamp < 0
+        || batch.max_timestamp < 0
+        || batch.max_timestamp < batch.base_timestamp
+    {
+        return Err(ErrorCode::InvalidTimestamp);
+    }
+
+    let encoded = Bytes::from(batch.clone());
+    if encoded.len() > limits.max_message_bytes {
+        return Err(ErrorCode::MessageTooLarge);
+    }
+    if encoded.len() > limits.max_record_batch_bytes {
+        return Err(ErrorCode::RecordListTooLarge);
+    }
+
+    let inflated = inflated::Batch::try_from(batch)
+        .map_err(|_| ErrorCode::CorruptMessage)?;
+
+    if inflated.records.is_empty() {
+        return Err(ErrorCode::InvalidRecord);
+    }
+
+    let actual_count = i32::try_from(inflated.records.len())
+        .map_err(|_| ErrorCode::CorruptMessage)?;
+
+    if actual_count != batch.records_count {
+        return Err(ErrorCode::CorruptMessage);
+    }
+
+    let expected_last_delta = actual_count - 1;
+    if batch.last_offset_delta != expected_last_delta {
+        return Err(ErrorCode::CorruptMessage);
+    }
+
+    // Keep the current canonical re-encode CRC/batch_length check.
+    let canonical = deflated::Frame {
+        batches: vec![inflated.clone()],
+    };
+
+    let canonical = deflated::Frame::try_from(canonical)
+        .map_err(|_| ErrorCode::CorruptMessage)?;
+
+    let Some(canonical_batch) = canonical.batches.first() else {
+        return Err(ErrorCode::CorruptMessage);
+    };
+
+    if canonical_batch.batch_length != batch.batch_length || canonical_batch.crc != batch.crc {
+        return Err(ErrorCode::CorruptMessage);
+    }
+
+    Ok(ValidatedBatch {
+        batch: batch.clone(),
+        record_count: actual_count,
+        encoded_bytes: encoded.len(),
+        first_timestamp_ms: batch.base_timestamp,
+        max_timestamp_ms: batch.max_timestamp,
+        attributes,
+    })
+}
+```
+
+The exact enum names may need adjustment to whatever `jansu_sans_io::ErrorCode` generated, but the Kafka error classes must be preserved: `INVALID_REQUIRED_ACKS`, `UNKNOWN_TOPIC_OR_PARTITION`, `UNKNOWN_TOPIC_ID`, `TOPIC_AUTHORIZATION_FAILED`, `CORRUPT_MESSAGE`, `INVALID_RECORD`, `INVALID_TIMESTAMP`, `UNSUPPORTED_COMPRESSION_TYPE`, `MESSAGE_TOO_LARGE`, `RECORD_LIST_TOO_LARGE`, `NOT_ENOUGH_REPLICAS`, and `NOT_ENOUGH_REPLICAS_AFTER_APPEND`. Kafka 4.2’s protocol table defines these relevant error codes and meanings. ([Apache Kafka][1])
+
+Partition handling should follow this order:
+
+```rust
+async fn produce_partition<S>(
+    storage: &S,
+    transaction_id: Option<&str>,
+    topic: &ResolvedTopic,
+    partition: &PartitionProduceData,
+    request_acks: i16,
+    limits: &ProduceLimits,
+) -> PartitionProduceResponse
+where
+    S: Storage + ?Sized,
+{
+    let index = partition.index;
+    let topition = Topition::new(topic.name(), index);
+
+    if !topic.has_partition(index) {
+        return partition_error(index, ErrorCode::UnknownTopicOrPartition);
+    }
+
+    let Some(records) = partition.records.as_ref() else {
+        return partition_error(index, ErrorCode::InvalidRecord);
+    };
+
+    let mut validated = Vec::with_capacity(records.batches.len());
+
+    for batch in &records.batches {
+        if batch.is_idempotent() && !storage.capabilities().supports(StorageFeature::ProducerState) {
+            return partition_error(index, ErrorCode::UnknownProducerId);
+        }
+
+        match validate_batch_exact(batch, limits) {
+            Ok(batch) => validated.push(batch),
+            Err(error_code) => return partition_error(index, error_code),
+        }
+    }
+
+    if request_acks == -1 {
+        if let Err(error_code) = topic.check_min_isr_for_acks_all() {
+            return partition_error(index, error_code);
+        }
+    }
+
+    let mut base_offset = None;
+
+    for batch in validated {
+        match storage.produce(transaction_id, &topition, batch.batch).await {
+            Ok(offset) => {
+                base_offset.get_or_insert(offset);
+            }
+            Err(err) => {
+                return partition_error(index, map_storage_error(err));
+            }
+        }
+    }
+
+    let stage = storage.offset_stage(&topition).await.ok();
+
+    PartitionProduceResponse::default()
+        .index(index)
+        .error_code(ErrorCode::None.into())
+        .base_offset(base_offset.unwrap_or(-1))
+        .log_append_time_ms(-1)
+        .log_start_offset(stage.map_or(0, |stage| stage.log_start()))
+        .record_errors(Some(vec![]))
+        .error_message(None)
+}
+```
+
+Storage errors must be mapped deliberately, not collapsed:
+
+```rust
+fn map_storage_error(error: Error) -> ErrorCode {
+    match error {
+        Error::Api(code) => code,
+        Error::Schema(_) => ErrorCode::InvalidRecord,
+        Error::SegmentMissing { .. } | Error::SegmentEmpty(_) => ErrorCode::KafkaStorageError,
+        Error::UnsupportedStorageUrl(_) => ErrorCode::KafkaStorageError,
+        _ => ErrorCode::UnknownServerError,
+    }
+}
+```
+
+---
+
+### 6. Add request/batch/message size policy
+
+Kafka producer config has `max.request.size`, default `1048576`, and says this caps request size and effectively caps uncompressed record batch size; broker-side caps can differ. ([Apache Kafka][2])
+
+Add a broker/storage config model:
+
+```rust
+#[derive(Clone, Debug)]
+pub struct ProduceConfig {
+    pub max_request_bytes: usize,
+    pub message_max_bytes: usize,
+    pub replica_fetch_max_bytes: usize,
+    pub min_insync_replicas: i32,
+}
+
+impl Default for ProduceConfig {
+    fn default() -> Self {
+        Self {
+            max_request_bytes: 1048576,
+            message_max_bytes: 1048588,
+            replica_fetch_max_bytes: 1048576,
+            min_insync_replicas: 1,
+        }
+    }
+}
+```
+
+Then parse topic configs in `ProduceService`:
+
+```rust
+fn topic_int_config(config: &DescribeConfigsResult, key: &str) -> Option<i32> {
+    config
+        .configs
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|item| item.name == key)
+        .and_then(|item| item.value.as_deref())
+        .and_then(|value| value.parse::<i32>().ok())
+}
+
+async fn produce_limits<S>(storage: &S, topic: &str) -> Result<ProduceLimits>
+where
+    S: Storage + ?Sized,
+{
+    let config = storage
+        .describe_config(topic, ConfigResource::Topic, None)
+        .await?;
+
+    let max_message_bytes = topic_int_config(&config, "max.message.bytes")
+        .unwrap_or(1_048_588)
+        .try_into()?;
+
+    Ok(ProduceLimits {
+        max_request_bytes: 1_048_576,
+        max_message_bytes,
+        max_record_batch_bytes: max_message_bytes,
+        timestamp_before_max_ms: topic_int_config(&config, "message.timestamp.before.max.ms").map(i64::from),
+        timestamp_after_max_ms: topic_int_config(&config, "message.timestamp.after.max.ms").map(i64::from),
+    })
+}
+```
+
+Add tests for:
+
+```rust
+too_large_record_returns_message_too_large_without_append
+too_large_record_batch_returns_record_list_too_large_without_append
+too_large_request_is_rejected_or_disconnects_according_to_layer
+```
+
+---
+
+### 7. Add Snappy to the positive compression matrix
+
+Existing storage tests cover `none`, `gzip`, `lz4`, and `zstd`, but Phase 07 and Kafka producer configs include `snappy` as a valid producer compression type.  ([Apache Kafka][2])
+
+Patch existing test matrix:
+
+```rust
+#[case("compression-none", Compression::None)]
+#[case("compression-gzip", Compression::Gzip)]
+#[case("compression-snappy", Compression::Snappy)]
+#[case("compression-lz4", Compression::Lz4)]
+#[case("compression-zstd", Compression::Zstd)]
+#[tokio::test]
+async fn supported_compressions_are_accepted_without_append(
+    #[case] name: &str,
+    #[case] compression: Compression,
+) -> Result<()> {
+    // existing body
+}
+```
+
+If `Compression::Snappy` is missing from `jansu_sans_io`, that is a protocol/codegen gap that must be fixed before Phase 07 can claim full normal producer compatibility.
+
+---
+
+### 8. Fix DynoStore lake-sink mutation ordering
+
+The current DynoStore lake-sink branch calculates and persists watermark before schema validation. That can advance offsets when schema validation fails, directly violating Phase 07’s no-mutation-before-final-failure rule. 
+
+Patch shape:
+
+```rust
+async fn produce(
+    &self,
+    transaction_id: Option<&str>,
+    topition: &Topition,
+    deflated: deflated::Batch,
+) -> Result<i64> {
+    let config = self
+        .describe_config(topition.topic(), ConfigResource::Topic, None)
+        .await?;
+
+    let attributes = BatchAttribute::try_from(deflated.attributes)?;
+
+    let inflated_for_validation = if !attributes.control
+        && (self.schemas.is_some() || self.lake.is_some())
+    {
+        Some(inflated::Batch::try_from(&deflated)?)
+    } else {
+        None
+    };
+
+    if let (Some(registry), Some(inflated)) = (&self.schemas, &inflated_for_validation) {
+        registry.validate(topition.topic(), inflated).await?;
+    }
+
+    // Only after all pure validation passes:
+    let offset = self.allocate_and_persist_offset(topition, &deflated).await?;
+
+    // Lake storage happens after the Kafka log append decision. If lake sink is mandatory,
+    // make offset/watermark commit the last durable write or compensate on failure.
+    if !attributes.control
+        && let (Some(lake), Some(inflated)) = (&self.lake, &inflated_for_validation)
+    {
+        lake.store(
+            topition.topic(),
+            topition.partition(),
+            offset,
+            inflated,
+            config,
+        )
+        .await?;
+    }
+
+    Ok(offset)
+}
+```
+
+Add a focused test:
+
+```rust
+#[tokio::test]
+async fn lake_sink_schema_failure_does_not_advance_offsets() -> Result<()> {
+    let storage = dynostore_with_schema_and_lake_sink().await?;
+    let topic = create_lake_topic_with_schema(&storage).await?;
+
+    let err = produce_invalid_schema_record(&storage, &topic).await.unwrap_err();
+    assert_eq!(ErrorCode::InvalidRecord, api_error(err));
+
+    let stage = storage.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(0, stage.high_watermark());
+    assert_eq!(0, stage.log_start());
+
+    Ok(())
+}
+```
+
+---
+
+### 9. Implement exact `acks=all` policy for current single-node storage
+
+Kafka defines `acks=0`, `acks=1`, and `acks=all`; `acks=all` is equivalent to `acks=-1` and waits for the in-sync replica set. ([Apache Kafka][2])
+
+Current tests treat `Ack::FullIsr` as a successful storage path or a wire response path, but there is no real ISR/min-ISR decision.  
+
+Add a minimal policy object:
+
+```rust
+#[derive(Clone, Debug)]
+struct IsrStatus {
+    leader_id: i32,
+    replica_count: usize,
+    isr_count: usize,
+    min_insync_replicas: usize,
+}
+
+impl IsrStatus {
+    fn validate_acks_all_before_append(&self) -> Result<(), ErrorCode> {
+        if self.isr_count < self.min_insync_replicas {
+            Err(ErrorCode::NotEnoughReplicas)
+        } else {
+            Ok(())
+        }
+    }
+}
+```
+
+For current single-node Jansu topics:
+
+* `replication_factor=1`
+* `isr_count=1`
+* `min.insync.replicas=1`
+* `acks=-1` succeeds after durable local append
+
+Do not use `replication_factor=0` in Phase 07 compatibility tests; Kafka topics are not meaningfully compatible with zero replicas.
+
+---
+
+### 10. Populate version-specific Produce response fields
+
+Kafka Produce response v5+ includes `log_start_offset`; v8+ includes `record_errors` and `error_message`; v10+ includes tagged `current_leader` and `node_endpoints`; v13 uses `topic_id` instead of `name`. ([Apache Kafka][1])
+
+Required response policy:
+
+```rust
+fn partition_error(index: i32, error: ErrorCode) -> PartitionProduceResponse {
+    PartitionProduceResponse::default()
+        .index(index)
+        .error_code(error.into())
+        .base_offset(-1)
+        .log_append_time_ms(-1)
+        .log_start_offset(0)
+        .record_errors(Some(vec![]))
+        .error_message(Some(error.to_string()))
+}
+
+fn partition_success(
+    index: i32,
+    base_offset: i64,
+    log_start_offset: i64,
+    log_append_time_ms: i64,
+) -> PartitionProduceResponse {
+    PartitionProduceResponse::default()
+        .index(index)
+        .error_code(ErrorCode::None.into())
+        .base_offset(base_offset)
+        .log_append_time_ms(log_append_time_ms)
+        .log_start_offset(log_start_offset)
+        .record_errors(Some(vec![]))
+        .error_message(None)
+}
+```
+
+The serializer should omit fields by version according to generated protocol metadata, but the service should set the semantic values.
+
+---
+
+## Required tests
+
+### Storage tests
+
+Add to `jansu-storage/tests/produce_exactness.rs`:
+
+```rust
+#[tokio::test]
+async fn acks_zero_is_valid_and_appends_on_storage_path() {}
+
+#[tokio::test]
+async fn snappy_compression_is_accepted_without_append_side_effects() {}
+
+#[tokio::test]
+async fn too_large_record_returns_message_too_large_without_append() {}
+
+#[tokio::test]
+async fn too_large_batch_returns_record_list_too_large_without_append() {}
+
+#[tokio::test]
+async fn min_insync_replicas_failure_returns_not_enough_replicas_without_append() {}
+
+#[tokio::test]
+async fn idempotent_batch_without_producer_state_returns_unknown_producer_id_without_append() {}
+
+#[tokio::test]
+async fn topic_id_unknown_returns_unknown_topic_id_without_append() {}
+
+#[tokio::test]
+async fn lake_sink_schema_failure_does_not_advance_offsets() {}
+```
+
+Keep all existing Phase 07 storage tests; they already cover invalid acks, unknown topic, invalid partition, CRC, unsupported compression, all-batches-before-append, length/count mismatch, invalid timestamp, independent partitions, and schema failure offset safety in the current exactness wrapper. 
+
+### Broker wire tests
+
+Add to `jansu-broker/tests/produce_exactness.rs`:
+
+```rust
+#[tokio::test]
+async fn api_versions_advertises_produce_after_phase07_proof() {}
+
+#[tokio::test]
+async fn produce_request_versions_decode_across_kafka42_versions_0_to_13() {}
+
+#[tokio::test]
+async fn produce_v13_topic_id_success_round_trip() {}
+
+#[tokio::test]
+async fn produce_v13_unknown_topic_id_returns_unknown_topic_id() {}
+
+#[tokio::test]
+async fn produce_v5_plus_includes_log_start_offset() {}
+
+#[tokio::test]
+async fn produce_v8_plus_includes_record_errors_shape() {}
+
+#[tokio::test]
+async fn produce_v10_plus_includes_current_leader_shape_on_leader_error() {}
+
+#[tokio::test]
+async fn produce_acks_zero_real_storage_appends_but_sends_no_bytes() {}
+```
+
+Replace the current `api_versions_do_not_advertise_produce` test with an advertisement test only after differential/client proof lands. Until then, keep the current test and keep the ledger unadvertised. 
+
+### TCP/frame tests
+
+Add to `jansu-service`:
+
+```rust
+#[tokio::test]
+async fn maximum_frame_size_allows_smaller_frame() {}
+
+#[tokio::test]
+async fn maximum_frame_size_rejects_larger_frame() {}
+
+#[tokio::test]
+async fn acks_zero_suppression_is_single_source_of_truth() {}
+```
+
+---
+
+## Differential Kafka lab for Phase 07
+
+Phase 07 cannot close without this. The current Phase 07 log explicitly leaves Produce unadvertised because no stable Java/librdkafka differential harness was found. 
+
+Create:
+
+```text
+jansu-broker/tests/produce_differential.rs
+jansu-broker/tests/produce_client_java.rs
+jansu-broker/tests/produce_client_librdkafka.rs
+tests/fixtures/produce/
+tests/fixtures/produce/java/
+tests/fixtures/produce/librdkafka/
+```
+
+### Differential scenarios
+
+Run every scenario against Kafka 4.2 and Jansu, then normalize dynamic fields:
+
+* `throttle_time_ms`
+* broker node IDs/host/port when environment-specific
+* log append time when topic uses `LogAppendTime`
+* correlation ID/client ID
+
+Matrix:
+
+```text
+acks: 0, 1, all
+compression: none, gzip, snappy, lz4, zstd
+request shape: one topic/one partition, one topic/multi partition, multi topic/multi partition
+versions: raw wire v0..v13
+topic identity: name for v0..v12, topic_id for v13
+errors:
+  invalid acks
+  unknown topic
+  unknown topic id
+  invalid partition
+  corrupt CRC
+  invalid magic
+  invalid timestamp
+  unsupported compression
+  oversized message
+  oversized batch
+  min ISR failure
+  schema failure
+```
+
+Java producer config for Phase 07:
+
+```properties
+bootstrap.servers=127.0.0.1:${PORT}
+key.serializer=org.apache.kafka.common.serialization.ByteArraySerializer
+value.serializer=org.apache.kafka.common.serialization.ByteArraySerializer
+enable.idempotence=false
+acks=all
+retries=0
+linger.ms=0
+delivery.timeout.ms=30000
+request.timeout.ms=10000
+compression.type=${compression}
+```
+
+librdkafka config for Phase 07:
+
+```properties
+bootstrap.servers=127.0.0.1:${PORT}
+enable.idempotence=false
+acks=${acks}
+message.timeout.ms=30000
+request.timeout.ms=10000
+compression.type=${compression}
+api.version.request=true
+```
+
+Do not call these “default producer compatibility” because Kafka 4.2 defaults idempotence to true; that belongs to Phase 11. ([Apache Kafka][2])
+
+---
+
+## Ledger, phase log, and audit changes
+
+### `docs/compatibility/kafka-4.2-ledger.json`
+
+For API key 0:
+
+* `descriptor_versions.max = 13` after schema update.
+* `current_advertised_versions = approved_advertised_versions = { "min": 0, "max": 13 }`.
+* `semantic_status = "compatible"` only if Java/librdkafka/differential proof is present.
+* Profiles:
+
+  * `jansu-native`: `green`
+  * `compat-preview`: `green`
+  * storage profiles green/yellow according to backend proof
+* `client_tests` must name the Java and librdkafka tests.
+* `failure_modes = "tested"`.
+
+### `jansu-broker/tests/compatibility_contract.rs`
+
+Update allowed failure-mode statuses:
+
+```rust
+const ALLOWED_FAILURE_MODE_STATUSES: [&str; 3] = ["untested", "partial", "tested"];
+```
+
+Replace:
+
+```rust
+assert_eq!("untested", row.proof.failure_modes);
+```
+
+with:
+
+```rust
+assert_allowed_value(
+    row.proof.failure_modes.as_str(),
+    &ALLOWED_FAILURE_MODE_STATUSES,
+);
+```
+
+Then add a stricter Produce block:
+
+```rust
+if row.api_key == ProduceRequest::KEY && row.semantic_status == "compatible" {
+    assert_eq!(
+        Some(VersionRange { min: 0, max: 13 }),
+        row.approved_advertised_versions
+    );
+
+    assert!(
+        row.proof.differential_tests.iter().any(|test| test.contains("produce_differential")),
+        "Produce compatibility requires Kafka differential proof"
+    );
+
+    assert!(
+        row.proof.client_tests.get("java").is_some(),
+        "Produce compatibility requires Java client proof"
+    );
+
+    assert!(
+        row.proof.client_tests.get("librdkafka").is_some(),
+        "Produce compatibility requires librdkafka proof"
+    );
+}
+```
+
+### `AUDIT.md`
+
+Resolve `AUDIT-003` only after the ledger points to the new proof:
+
+```text
+- `AUDIT-003` — status: `resolved`; phase: `07`; Produce is advertised only after Kafka 4.2 differential, Java, and librdkafka non-idempotent proof are recorded in the compatibility ledger.
+```
+
+### Phase logs
+
+Update:
+
+```text
+phase-logs/07-produce-exactness.md.log
+phase-logs/index.json
+phase-logs/attempts/07/<timestamp>.md
+```
+
+The repo’s plan/agent instructions require phase logs, ledger updates, proof links, and verification commands for compatibility work.  
+
+---
+
+## Validation commands
+
+Run these before advertising Produce:
+
+```bash
+rtk cargo test -p jansu-sans-io --all-features produce -- --nocapture
+
+rtk cargo test -p jansu-storage --test produce_exactness --all-features -- --nocapture
+rtk cargo test -p jansu-storage --test log_contract --all-features -- --nocapture
+
+rtk cargo test -p jansu-service --all-features maximum_frame_size -- --nocapture
+
+rtk cargo test -p jansu-broker --test produce_exactness --all-features -- --nocapture
+rtk cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+
+rtk cargo test -p jansu-broker --test produce_differential --features kafka-lab -- --ignored --nocapture
+rtk cargo test -p jansu-broker --test produce_client_java --features kafka-lab -- --ignored --nocapture
+rtk cargo test -p jansu-broker --test produce_client_librdkafka --features kafka-lab -- --ignored --nocapture
+
+rtk env CARGO_TARGET_DIR=/tmp/phase07-verify \
+  cargo check -p jansu-sans-io -p jansu-storage -p jansu-service -p jansu-broker \
+  --all-features --all-targets
+
+rtk cargo fmt --all --check
+rtk git diff --check
+rtk git check-ignore -v phase-logs/07-produce-exactness.md.log
+```
+
+---
+
+## Implementation order
+
+1. **Fix frame-size check** in `jansu-service/src/stream.rs`.
+2. **Centralize `acks=0` suppression** so only the frame layer decides wire silence.
+3. **Add Snappy coverage** and any missing `Compression::Snappy` codec support.
+4. **Update Produce schema to v13**, including topic-ID request/response.
+5. **Refactor `ProduceService` into resolve → validate → append → respond**.
+6. **Add Produce size/timestamp/min-ISR policies**.
+7. **Fix DynoStore lake-sink validation-before-watermark ordering**.
+8. **Add storage and broker exactness tests**.
+9. **Build differential Kafka lab** for Kafka 4.2, Java, and librdkafka.
+10. **Update ledger/contract/log/audit**.
+11. **Advertise Produce** only after all proof commands pass.
+
+That is the Phase 07 finish line: a routed, advertised, ledger-backed, non-idempotent Kafka Produce implementation with exact validation/error behavior, version-correct wire responses through Kafka 4.2, and proof from storage tests, broker tests, Kafka differential tests, Java client tests, and librdkafka client tests.
+
+[1]: https://kafka.apache.org/42/design/protocol/ "Protocol | Apache Kafka"
+[2]: https://kafka.apache.org/42/configuration/producer-configs/ "Producer Configs | Apache Kafka"
+

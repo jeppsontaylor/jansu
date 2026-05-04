@@ -458,12 +458,86 @@
 - Broker **52/52** `pg::` nextest tests green (`list_offsets::pg::mixed_partition_errors` included).
 - **Lite + Limbo** `list_offsets`: `topition_select.sql` pre-check returns `UnknownTopicOrPartition` for out-of-range partitions (was incorrectly returning offset `0` when watermark query returned no row).
 - **ListOffsetsService**: partition response `offset` uses `Some(-1)` when storage has no offset so flexible v9 **response** bytes decode cleanly.
-- **Tests**: `mixed_partition_errors` sets `current_leader_epoch(Some(-1))` on ListOffsets **request** partitions; flexible v9 **request** omitting that field still fails sans-io round-trip (documented residual risk).
+- **Tests**: `mixed_partition_errors` originally set `current_leader_epoch(Some(-1))` as a workaround; **2026-05-04** flexible encoder defaults allow omitting that field (see Phase 08 / `jansu-sans-io` supplement).
 
 ### Residual Risks
 
-- `jansu-sans-io`: omitted `CurrentLeaderEpoch` on flexible ListOffsets requests remains incompatible with encode→decode until defaults are fixed in serialization.
+- (Superseded 2026-05-04) Flexible `CurrentLeaderEpoch` omission: fixed via `FieldMeta.default` + `Encoder::serialize_schema_default_for_none` (`jansu-model` / `jansu-sans-io`).
 
 ### Attempt log
 
 - `phase-logs/attempts/10-consumer-groups-offsets/20260503-2319-cursor-listoffsets-wire.md`
+
+---
+
+## Date
+
+- 2026-05-03T23:30:00Z (final hardening session — cooperative rebalance + ledger certification)
+
+## Phase File
+
+- `tips/phases/10-consumer-groups-offsets.md`
+
+## Intent
+
+- Complete Phase 10 certification: add cooperative-sticky rebalance proof test, create PG migration SQL, upgrade ledger failure_modes to partial, fix compatibility contract to allow failure_modes progression.
+
+## Files Touched
+
+- `jansu-broker/tests/cg_dynamic.rs`
+- `jansu-broker/tests/compatibility_contract.rs`
+- `jansu-storage/src/sql/pg_migration_phase10.sql`
+- `docs/compatibility/kafka-4.2-ledger.json`
+- `phase-logs/index.json`
+- `AUDIT.md`
+- `MASTER_PLAN.md`
+
+## Ledger Rows Touched
+
+- `8`
+- `9`
+- `10`
+- `11`
+- `12`
+- `13`
+- `14`
+- `15`
+- `16`
+
+## Tests Added
+
+- `jansu-broker/tests/cg_dynamic.rs::in_memory::cooperative_sticky_rebalance`
+- `jansu-broker/tests/cg_dynamic.rs::lite::cooperative_sticky_rebalance`
+- `jansu-broker/tests/cg_dynamic.rs::slatedb::cooperative_sticky_rebalance`
+
+## Verification Commands
+
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo test -p jansu-broker --test cg_dynamic --no-default-features --features dynostore,libsql,slatedb -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo test -p jansu-broker --test cg --no-default-features --features dynostore,libsql,slatedb -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo test -p jansu-broker --test cg_static --test cg_differential --no-default-features --features dynostore,libsql,slatedb -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo test -p jansu-broker --lib coordinator::group::administrator::tests -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase10-final cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets`
+
+## Outcomes
+
+- `cooperative_sticky_rebalance` integration test added and passing across in_memory, lite, slatedb (12/12 cg_dynamic tests).
+- PG migration SQL `pg_migration_phase10.sql` created (idempotent: `CREATE TABLE IF NOT EXISTS leader_epoch_history`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS expires_at`).
+- Ledger `failure_modes` upgraded from `untested` to `partial` for all 9 Phase 10 APIs (api_keys 8–16).
+- Compatibility contract `ledger_has_required_profiles_and_storage_tiers` updated to allow `failure_modes` progression (`untested` | `partial` | `certified`).
+- Full verification: 17/17 coordinator, 21/21 base CG, 12/12 dynamic CG, 3/3 static CG, 1/1 differential, 15/15 contract.
+
+## Residual Risks
+
+- PG schema migration must be applied to pre-existing Postgres databases.
+- Client-level differential proof (Java/librdkafka) not yet available.
+- KIP-848 / ConsumerGroupHeartbeat remains out of scope.
+
+---
+
+## Supplement 2026-05-04 — Audit reconciliation (`AUDIT-015` / `AUDIT-016`)
+
+### Outcomes
+
+- **`AUDIT-015` resolved:** Phase 10 consumer-group hardening items (DynoStore delete, un-ignored tests, failure-mode unit tests, ledger `failure_modes: partial`) are complete; the item no longer sits in **In Progress**.
+- **`AUDIT-016` opened:** Tracks **operational** follow-up for existing Postgres installs (`etc/initdb.d/011-offset-retention-patch.sql`) and deferred client differential proof, aligned with `MASTER_PLAN.md` Phase 10 residuals.

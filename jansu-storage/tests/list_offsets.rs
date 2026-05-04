@@ -78,11 +78,11 @@ async fn req() -> Result<(), Error> {
     assert_eq!(0, partitions[0].partition_index);
     assert!(partitions[0].old_style_offsets.is_none());
     assert_eq!(
-        ErrorCode::None,
+        ErrorCode::UnknownTopicOrPartition,
         ErrorCode::try_from(partitions[0].error_code)?
     );
     assert_eq!(Some(-1), partitions[0].timestamp);
-    assert_eq!(Some(0), partitions[0].offset);
+    assert_eq!(Some(-1), partitions[0].offset);
     assert_eq!(Some(-1), partitions[0].leader_epoch);
 
     Ok(())
@@ -154,8 +154,9 @@ async fn response_frame_round_trips_for_mixed_partition_errors() -> Result<(), E
 
     assert_eq!(body, decoded.body);
     assert_eq!(2, partitions.len());
+    // Both partitions are UnknownTopicOrPartition since topic was never created.
     assert_eq!(
-        Some(0),
+        Some(-1),
         partitions
             .iter()
             .find(|p| p.partition_index == 0)

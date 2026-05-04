@@ -1,0 +1,195 @@
+I could not literally `git clone` in the sandbox because DNS resolution for `github.com` failed, but I did pull and inspect the repository through the GitHub connector and browser. I read the required control files and the relevant code anchors: `AGENTS.md`, `MASTER_PLAN.md`, `AUDIT.md`, `phase-logs/index.json`, the Phase 04 spec, the compatibility ledger, broker tests, broker routing, service advertisement, compose, and justfile.
+
+Here is the complete Phase 04 closure package with the file-by-file code, scripts, ledger patches, log updates, workflow, and validation sequence:
+
+[Download the full Phase 04 solution package](sandbox:/mnt/data/phase04_full_solution.md)
+
+## What Phase 04 actually needs to finish
+
+Phase 04 is not primarily a broker feature phase. It is the proof infrastructure phase: build a repeatable Apache Kafka-vs-Jansu lab, run the same workloads against both systems, capture differences, and feed that evidence into the compatibility ledger. The Phase 04 spec explicitly requires side-by-side Kafka 4.2 and Jansu startup, common workloads, Java/librdkafka first, CLI fixtures, normalized artifacts, and ledger feedback. 
+
+`AUDIT-012` is currently the blocker: full differential certification is marked blocked until a stable local Kafka harness and client matrix exist in the repo.  The package above resolves that blocker by adding a real harness, not just more Rust unit tests.
+
+## Core design
+
+The solution adds a reusable Phase 04 lab with these parts:
+
+1. **Pinned Kafka 4.2 reference**
+
+   * Adds `compose.kafka-lab.yaml`.
+   * Uses `apache/kafka:4.2.0`.
+   * Exposes a host listener on `127.0.0.1:19094`.
+   * Disables auto topic creation so negative cases are meaningful.
+
+2. **Jansu target broker**
+
+   * `tools/differential/run.sh` builds and starts local Jansu on `127.0.0.1:19092`.
+   * Uses memory storage for fast, isolated proof runs.
+   * Captures broker logs into the artifact directory.
+
+3. **Java/Kafka CLI workload**
+
+   * Adds `tools/differential/workloads/kafka_cli_smoke.sh`.
+   * Runs the same workload against Kafka and Jansu:
+
+     * ApiVersions
+     * topic create
+     * topic describe
+     * produce records
+     * get earliest/latest offsets
+     * consume records
+     * consumer-group describe
+     * unknown-topic negative cases
+
+4. **librdkafka workload**
+
+   * Adds `jansu-broker/tests/differential_librdkafka.rs`.
+   * Uses the existing `rdkafka` dev dependency already present in `jansu-broker/Cargo.toml`. 
+   * Produces and consumes the same records against Kafka and Jansu.
+   * Emits `rdkafka/summary.json`.
+
+5. **Artifact normalizer**
+
+   * Adds `tools/differential/normalize.py`.
+   * Converts raw CLI and librdkafka output into one stable `summary.json`.
+   * Checks advertised API subset behavior, offsets, records, command statuses, and negative artifact presence.
+
+6. **Ledger gate**
+
+   * Adds `tools/differential/ledger_gate.py`.
+   * Fails if any Jansu-advertised API lacks `proof.client_tests.phase04`.
+   * Fails if Jansu advertises an API version range outside Kafka 4.2.
+   * Fails if Jansu advertises something not approved by the ledger.
+
+7. **Client matrix**
+
+   * Adds `docs/compatibility/phase04-differential-matrix.json`.
+   * Defines required Phase 04 clients:
+
+     * `kafka-java-cli`
+     * `librdkafka-rdkafka`
+   * Leaves franz-go and Sarama as later Phase 16 ecosystem expansions, while still preserving the existing Sarama documentation path. 
+
+8. **Contract tests**
+
+   * Adds `jansu-broker/tests/differential_lab.rs`.
+   * Extends `jansu-broker/tests/compatibility_contract.rs` so advertised APIs must carry Phase 04 client proof.
+
+9. **CI**
+
+   * Adds `.github/workflows/phase04-differential.yml`.
+   * Runs `just phase04-differential`.
+   * Uploads `target/differential/phase04/**` artifacts.
+
+10. **Bookkeeping**
+
+* Updates `AUDIT.md`.
+* Updates `phase-logs/index.json`.
+* Updates `phase-logs/04-differential-kafka-lab.md.log`.
+* Adds a Phase 04 attempt log.
+
+## Why this is the right scope
+
+Jansu currently advertises only ApiVersions and Metadata in `jansu-broker/src/service.rs`. Produce, Fetch, ListOffsets, OffsetForLeaderEpoch, and many other APIs are routed elsewhere, but not advertised by ApiVersions.   The ledger also records Produce as routed but unadvertised and explains that it remains pre-advertisement because the repo lacks a stable Java/librdkafka differential harness. 
+
+So Phase 04 should **not** suddenly advertise Produce, Fetch, or ListOffsets. That belongs to Phase 07 and Phase 08 once semantic parity is proven. Phase 04 should instead make those future claims provable by adding the harness and artifact gate.
+
+## Most important code changes included
+
+The package contains complete code for these new files:
+
+```text
+compose.kafka-lab.yaml
+tools/differential/README.md
+tools/differential/run.sh
+tools/differential/workloads/kafka_cli_smoke.sh
+tools/differential/normalize.py
+tools/differential/ledger_gate.py
+docs/compatibility/phase04-differential-matrix.json
+jansu-broker/tests/differential_lab.rs
+jansu-broker/tests/differential_librdkafka.rs
+.github/workflows/phase04-differential.yml
+```
+
+It also contains exact patch instructions for:
+
+```text
+justfile
+docs/compatibility/kafka-4.2-ledger.json
+jansu-broker/tests/compatibility_contract.rs
+AUDIT.md
+phase-logs/index.json
+phase-logs/04-differential-kafka-lab.md.log
+phase-logs/attempts/04-differential-kafka-lab/<timestamp>-phase04-differential-lab.md
+```
+
+## Ledger update strategy
+
+The compatibility contract already enforces that compatibility claims are backed by ledger proof, and the agent contract says no compatibility claim is valid without ledger-backed proof. 
+
+The safe Phase 04 ledger move is:
+
+* Add `proof.client_tests.phase04` to every currently advertised API row, especially:
+
+  * `api_key 18` — ApiVersions
+  * `api_key 3` — Metadata
+
+* Add differential observation markers, but **do not advertise**, for:
+
+  * `api_key 0` — Produce
+  * `api_key 1` — Fetch
+  * `api_key 2` — ListOffsets
+  * `api_key 23` — OffsetForLeaderEpoch
+
+This finishes the harness without overstating semantic compatibility for Phase 07/08-owned APIs.
+
+## Validation commands
+
+After applying the package, the Phase 04 validation sequence is:
+
+```shell
+chmod +x tools/differential/run.sh tools/differential/workloads/kafka_cli_smoke.sh
+
+cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+
+just phase04-differential
+
+cargo fmt --all --check
+
+git diff --check
+```
+
+A passing run must produce:
+
+```text
+target/differential/phase04/<run-id>/summary.json
+target/differential/phase04/<run-id>/ledger-gate.txt
+target/differential/phase04/<run-id>/kafka/*
+target/differential/phase04/<run-id>/jansu/*
+target/differential/phase04/<run-id>/rdkafka/summary.json
+```
+
+And both of these must be true:
+
+```json
+"passed": true
+```
+
+in `summary.json` and `ledger-gate.txt`.
+
+## Completion state after these changes
+
+Once applied and validated, `AUDIT-012` can move from blocked to resolved because the repo will contain:
+
+* a stable local Kafka 4.2 baseline harness,
+* a client matrix,
+* Java/Kafka CLI proof,
+* librdkafka proof,
+* normalized CI artifacts,
+* ledger gating for advertised APIs,
+* reusable scripts for Phase 07, Phase 08, Phase 11, Phase 12, Phase 15, and Phase 16.
+
+That makes Phase 04 the proof backbone for the rest of the Kafka replacement effort.
+

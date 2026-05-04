@@ -291,6 +291,71 @@ impl Encoder {
     fn is_records(&self) -> bool {
         self.meta.field.is_some_and(|field| field.kind.is_records())
     }
+
+    /// Serialize a Kafka schema `default` when serde emits `None` for an `Option` field
+    /// that is present on the wire for this API version (flexible messages).
+    fn serialize_schema_default_for_none(&mut self) -> Result<bool> {
+        if !(self.is_valid() && self.is_flexible()) {
+            return Ok(false);
+        }
+        let Some(field) = self.meta.field else {
+            return Ok(false);
+        };
+        let Some(spec) = field.default else {
+            return Ok(false);
+        };
+        let kind = field.kind.name();
+        if kind == "bool" {
+            return match spec {
+                "true" => self.serialize_bool(true).map(|()| true),
+                "false" => self.serialize_bool(false).map(|()| true),
+                _ => Ok(false),
+            };
+        }
+
+        let v = parse_kafka_int_default(spec).map_err(|e| {
+            Error::Message(format!(
+                "invalid Kafka numeric default {spec:?} for {kind}: {e}"
+            ))
+        })?;
+
+        match kind {
+            "int8" => self
+                .serialize_i8(i8::try_from(v).map_err(|_| {
+                    Error::Message(format!("default {spec} out of range for int8"))
+                })?),
+            "int16" => {
+                self.serialize_i16(i16::try_from(v).map_err(|_| {
+                    Error::Message(format!("default {spec} out of range for int16"))
+                })?)
+            }
+            "int32" => {
+                self.serialize_i32(i32::try_from(v).map_err(|_| {
+                    Error::Message(format!("default {spec} out of range for int32"))
+                })?)
+            }
+            "int64" => {
+                self.serialize_i64(i64::try_from(v).map_err(|_| {
+                    Error::Message(format!("default {spec} out of range for int64"))
+                })?)
+            }
+            "uint16" => {
+                self.serialize_u16(u16::try_from(v).map_err(|_| {
+                    Error::Message(format!("default {spec} out of range for uint16"))
+                })?)
+            }
+            _ => return Ok(false),
+        }?;
+        Ok(true)
+    }
+}
+
+fn parse_kafka_int_default(spec: &str) -> std::result::Result<i128, std::num::ParseIntError> {
+    if let Some(hex) = spec.strip_prefix("0x").or_else(|| spec.strip_prefix("0X")) {
+        i128::from_str_radix(hex, 16)
+    } else {
+        spec.parse::<i128>()
+    }
 }
 
 impl Serializer for &mut Encoder {
@@ -499,6 +564,8 @@ impl Serializer for &mut Encoder {
             } else {
                 Ok(())
             }
+        } else if self.serialize_schema_default_for_none()? {
+            Ok(())
         } else {
             Ok(())
         }

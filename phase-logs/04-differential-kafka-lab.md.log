@@ -2,7 +2,8 @@
 
 ## Date
 
-- 2026-05-02
+- 2026-05-02 (canonical log created)
+- 2026-05-04 (harness completed)
 
 ## Phase File
 
@@ -10,29 +11,89 @@
 
 ## Intent
 
-- Track differential Kafka lab work needed to prove behavior against Kafka 4.2.
+- Resolve `AUDIT-012` by adding a stable Kafka 4.2 differential lab.
+- Compare every currently advertised Jansu API against a real Kafka 4.2 broker.
+- Preserve artifacts for future Produce, Fetch, ListOffsets, consumer-group, and ecosystem phases.
 
 ## Files Touched
 
-- `tips/phases/04-differential-kafka-lab.md`
-- `phase-logs/index.json`
+- AUDIT.md
+- MASTER_PLAN.md
+- docs/compatibility/differential-lab.md
+- docs/compatibility/kafka-4.2-ledger.json
+- etc/differential/compose.kafka-4.2.yaml
+- .github/workflows/differential-kafka-lab.yml
+- jansu-broker/tests/differential_lab.rs
+- jansu-broker/tests/compatibility_contract.rs
+- justfile
+- phase-logs/04-differential-kafka-lab.md.log
+- phase-logs/index.json
+- scripts/differential/kafka-cli-fixtures.sh
+- tips/phases/04-differential-kafka-lab.md
 
 ## Ledger Rows Touched
 
-- None.
+- API key 0 `ProduceRequest` — added differential_lab proof and client_tests.phase04
+- API key 3 `MetadataRequest` — added differential_lab proof and client_tests.phase04
+- API key 18 `ApiVersionsRequest` — added differential_lab proof and client_tests.phase04
 
 ## Tests Added
 
-- None.
+- `jansu-broker/tests/differential_lab.rs::differential_api_versions_advertised_subset_of_kafka42`
+- `jansu-broker/tests/differential_lab.rs::differential_metadata_for_empty_cluster_matches_advertised_contract`
+- `jansu-broker/tests/differential_lab.rs::differential_produce_round_trip_for_advertised_api`
+- `jansu-broker/tests/differential_lab.rs::differential_librdkafka_full_lifecycle` (ignored — future Phase 08/10)
+- `jansu-broker/tests/compatibility_contract.rs::phase04_differential_lab_completion_contract`
 
 ## Verification Commands
 
-- `cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `env JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture`
+- `env JANSU_DIFFERENTIAL=1 just differential-lab`
+- `cargo fmt --all --check`
+- `git diff --check`
 
 ## Outcomes
 
-- Canonical log created for future differential harness attempts.
+- Added a pinned Kafka 4.2 reference broker via Docker Compose.
+- Added side-by-side Jansu/Kafka differential tests (env-gated).
+- Added normalized JSON artifact output.
+- Added CLI fixture runner for Kafka command-line tools.
+- Added CI artifact upload workflow.
+- Added ledger-backed proof for the currently advertised API surface (ApiVersions, Metadata, Produce).
+- Added justfile recipes (differential-kafka-up/down, differential-lab, differential-lab-external, differential-cli-fixture).
+- Added lab documentation at docs/compatibility/differential-lab.md.
+- Added Phase 04 completion guard in compatibility_contract.rs.
+- Resolved `AUDIT-012`.
 
 ## Residual Risks
 
-- Full differential certification is blocked until the harness and client matrix exist.
+- Produce, Fetch, ListOffsets, consumer groups, idempotence, and transactions are not promoted by Phase 04 alone.
+- Deeper client matrix expansion remains owned by later API and ecosystem phases.
+- External differential tests require Docker or a supplied Kafka 4.2 bootstrap address.
+
+---
+
+## Supplement 2026-05-05 — Produce differential test un-ignored
+
+### Intent
+
+Align `differential_produce_round_trip_for_advertised_api` with the compatibility ledger: the test was listed under API key 0 `differential_tests` but carried a stale `#[ignore]`; Phase 07 auto-create / producer config makes the workload runnable when `JANSU_DIFFERENTIAL=1`.
+
+### Files Touched
+
+- `jansu-broker/tests/differential_lab.rs`
+- `docs/compatibility/differential-lab.md`
+- `MASTER_PLAN.md`
+- `AUDIT.md` (`AUDIT-004` harness wording)
+- `tips/phases/04-differential-kafka-lab.md`, `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+- `phase-logs/08-fetch-list-offsets-leader-epoch.md.log`
+- `phase-logs/attempts/08-fetch-list-offsets-leader-epoch/20260505-differential-produce-unignore-cursor.md`
+
+### Outcomes
+
+- `JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab` now executes Produce librdkafka round-trip by default alongside ApiVersions, Metadata, and Phase 08 ListOffsets/Fetch read evidence.
+
+### Residual Risks
+
+- `differential_librdkafka_full_lifecycle` remains ignored placeholder.

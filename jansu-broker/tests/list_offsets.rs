@@ -800,12 +800,10 @@ where
                                 ListOffsetsPartition::default()
                                     .partition_index(valid_partition)
                                     .timestamp(ListOffset::Latest.try_into()?)
-                                    .current_leader_epoch(Some(-1))
                                     .max_num_offsets(Some(1)),
                                 ListOffsetsPartition::default()
                                     .partition_index(invalid_partition)
                                     .timestamp(ListOffset::Latest.try_into()?)
-                                    .current_leader_epoch(Some(-1))
                                     .max_num_offsets(Some(1)),
                             ]
                             .into(),
@@ -1215,12 +1213,10 @@ async fn storage_route_round_trips_list_offsets_v9() -> Result<()> {
                         ListOffsetsPartition::default()
                             .partition_index(0)
                             .timestamp(ListOffset::Latest.try_into()?)
-                            .current_leader_epoch(Some(-1))
                             .max_num_offsets(Some(1)),
                         ListOffsetsPartition::default()
                             .partition_index(6)
                             .timestamp(ListOffset::Latest.try_into()?)
-                            .current_leader_epoch(Some(-1))
                             .max_num_offsets(Some(1)),
                     ]
                     .into(),
@@ -1384,6 +1380,7 @@ where
                         [ListOffsetsPartition::default()
                             .partition_index(0)
                             .timestamp(ListOffset::Latest.try_into().expect("latest timestamp"))
+                            .current_leader_epoch(Some(-1))
                             .max_num_offsets(Some(1))]
                         .into(),
                     ))]

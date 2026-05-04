@@ -391,7 +391,7 @@ pub struct Field {
     tagged: Option<VersionRange>,
     /// The entity type of this field.
     entity_type: Option<String>,
-    /// The default value of this field.
+    /// The default value of this field (Kafka JSON `default` string).
     default: Option<String>,
     /// Any fields this field contains.
     fields: Option<Vec<Field>>,
@@ -468,6 +468,12 @@ impl Field {
             || self
                 .fields()
                 .is_some_and(|fields| fields.iter().any(Field::has_float))
+    }
+
+    /// Kafka `default` string from the message descriptor, if present.
+    #[must_use]
+    pub fn kafka_default(&self) -> Option<&str> {
+        self.default.as_deref()
     }
 }
 
@@ -841,6 +847,8 @@ pub struct FieldMeta {
     pub tagged: Option<VersionRange>,
     /// The fields contained within this structure.
     pub fields: &'static [(&'static str, &'static FieldMeta)],
+    /// Kafka `default` from the descriptor (`None` when the field has no default).
+    pub default: Option<&'static str>,
 }
 
 impl FieldMeta {

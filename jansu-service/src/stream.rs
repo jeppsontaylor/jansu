@@ -308,7 +308,7 @@ where
             .inspect_err(|err| debug!(?err))?;
 
         if maximum_frame_size
-            .is_some_and(|maximum_frame_size| maximum_frame_size > frame_length(size))
+            .is_some_and(|maximum_frame_size| frame_length(size) > maximum_frame_size)
         {
             return Err(Into::into(Error::FrameTooBig(frame_length(size))));
         } else {

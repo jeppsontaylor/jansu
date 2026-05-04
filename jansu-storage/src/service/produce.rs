@@ -209,6 +209,16 @@ impl ProduceService {
             return Err(Error::Api(ErrorCode::InvalidRecord));
         }
 
+        // Kafka broker default message.max.bytes = 1_048_588 (1 MiB + 12 bytes overhead).
+        // The batch_length field represents the size of the batch payload after the
+        // base_offset (8 bytes) and batch_length (4 bytes) header, so the total
+        // on-wire size is batch_length + 12.
+        const MAX_MESSAGE_BYTES: i32 = 1_048_588;
+        let total_batch_size = batch.batch_length + 12;
+        if total_batch_size > MAX_MESSAGE_BYTES {
+            return Err(Error::Api(ErrorCode::MessageTooLarge));
+        }
+
         if batch.base_timestamp < 0
             || batch.max_timestamp < 0
             || batch.max_timestamp < batch.base_timestamp

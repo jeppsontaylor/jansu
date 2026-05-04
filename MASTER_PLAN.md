@@ -18,6 +18,8 @@ Done means:
 
 ## Priority Queue
 
+Default next **feature** phase after ongoing cross-phase hygiene: **Phase 08** (Phases 04 differential lab, 07 produce exactness, and 10 consumer groups are closed; `AUDIT-004` and `phase-logs/index.json` keep Phase 08 as the active Fetch/ListOffsets/leader-epoch track).
+
 1. `cross-phase` agent context enforcement: keep `AGENTS.md`, `MASTER_PLAN.md`, `AUDIT.md`, tool pointers, phase logs, and compatibility-contract tests aligned.
 2. Phase 08: `tips/phases/08-fetch-list-offsets-leader-epoch.md`.
 3. Phase 09: `tips/phases/09-topic-config-admin.md`.
@@ -30,7 +32,9 @@ Done means:
 
 Completed or historical phases remain authoritative inputs and may be reopened only for audit-backed fixes.
 
-- **Phase 10** (`tips/phases/10-consumer-groups-offsets.md`): milestone closed 2026-05-03; hardened 2026-05-03 (DynoStore delete_groups fix, failure-mode tests); canonical log `phase-logs/10-consumer-groups-offsets.md.log`, manifest status `legacy-complete`. Postgres DDL: `leader_epoch_history`, `consumer_offset.expires_at`, `011-offset-retention-patch.sql`, libSQL `maintain` statement-key fix, `PgStorage::create_topic` leader-epoch insert via `tx_prepare_execute` with `i64` start offset.
+- **Phase 10** (`tips/phases/10-consumer-groups-offsets.md`): milestone closed 2026-05-03; hardened 2026-05-03 (DynoStore delete_groups fix, failure-mode tests, cooperative-sticky rebalance proof, ledger `failure_modes: partial` for api_keys 8–16, PG migration SQL); canonical log `phase-logs/10-consumer-groups-offsets.md.log`, manifest status `legacy-complete`. Residual: PG migration on pre-existing databases, client-level differential proof.
+- **Phase 07** (`tips/phases/07-produce-exactness.md`): completed 2026-05-04. Produce advertised v0..=11 with full validation, snappy encode, frame-size hardening, batch-size validation, 16 storage tests, 5 broker tests. Differential proof infrastructure handed to Phase 04.
+- **Phase 04** (`tips/phases/04-differential-kafka-lab.md`): completed 2026-05-04. Kafka 4.2 reference harness, differential_lab.rs (ApiVersions/Metadata/Produce + Phase 08 ListOffsets/Fetch evidence tests), CLI fixtures, CI artifact upload, justfile recipes, ledger proofs for API keys 0, 1, 2, 3, 18, completion guard. AUDIT-012 resolved.
 
 ## Phase Order
 

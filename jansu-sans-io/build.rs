@@ -14,6 +14,7 @@
 
 use convert_case::{Case, Casing};
 use jansu_model::{CommonStruct, Field, Listener, Message, MessageKind, wv::Wv};
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use serde_json::Value;
@@ -25,7 +26,7 @@ use std::{
     io::{self, BufRead, BufReader, Cursor, Seek, Write},
     path::Path,
 };
-use syn::{Expr, Type};
+use syn::{Expr, LitStr, Type};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -1215,6 +1216,14 @@ fn each_field_meta(
         },
     );
 
+    let default_token = field.kafka_default().map_or_else(
+        || quote! { None },
+        |s| {
+            let lit = LitStr::new(s, Span::call_site());
+            quote! { Some(#lit) }
+        },
+    );
+
     quote! {
         (#name,
         &jansu_model::FieldMeta {
@@ -1224,6 +1233,7 @@ fn each_field_meta(
             tag: #tag,
             tagged: #tagged,
             fields: &[#(#children),*],
+            default: #default_token,
         })
     }
 }

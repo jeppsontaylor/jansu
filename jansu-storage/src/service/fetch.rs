@@ -201,9 +201,12 @@ impl FetchService {
         let mut batches = Vec::new();
 
         let mut offset = fetch_partition.fetch_offset;
+        let mut partition_max_bytes = u32::try_from(fetch_partition.partition_max_bytes)?;
 
         loop {
-            if *max_bytes == 0 {
+            let fetch_max_bytes = (*max_bytes).min(partition_max_bytes);
+
+            if fetch_max_bytes == 0 {
                 break;
             }
 
@@ -211,7 +214,7 @@ impl FetchService {
 
             let mut fetched = if let Some(cancellation) = cancellation.as_ref() {
                 tokio::select! {
-                    result = ctx.state().fetch(&tp, offset, min_bytes, *max_bytes, isolation) => {
+                    result = ctx.state().fetch(&tp, offset, min_bytes, fetch_max_bytes, isolation) => {
                         result
                             .inspect(|r| debug!(?tp, ?offset, ?r))
                             .inspect_err(|error| error!(?tp, ?error))?
@@ -224,14 +227,16 @@ impl FetchService {
                 }
             } else {
                 ctx.state()
-                    .fetch(&tp, offset, min_bytes, *max_bytes, isolation)
+                    .fetch(&tp, offset, min_bytes, fetch_max_bytes, isolation)
                     .await
                     .inspect(|r| debug!(?tp, ?offset, ?r))
                     .inspect_err(|error| error!(?tp, ?error))?
             };
 
-            *max_bytes =
-                u32::try_from(fetched.byte_size()).map(|bytes| max_bytes.saturating_sub(bytes))?;
+            let fetched_bytes =
+                Self::retain_batches_within_max_bytes(&mut fetched, fetch_max_bytes)?;
+            *max_bytes = max_bytes.saturating_sub(fetched_bytes);
+            partition_max_bytes = partition_max_bytes.saturating_sub(fetched_bytes);
 
             debug!(?offset, ?fetched);
 
@@ -283,6 +288,39 @@ impl FetchService {
                 Some(Frame { batches })
             }))
         .inspect(|r| debug!(?r))
+    }
+
+    fn retain_batches_within_max_bytes(batches: &mut Vec<Batch>, max_bytes: u32) -> Result<u32> {
+        if max_bytes == 0 {
+            batches.clear();
+            return Ok(0);
+        }
+
+        let mut bytes = 0u32;
+        let mut keep = 0usize;
+
+        for batch in batches.iter() {
+            let batch_bytes = u32::try_from(batch.byte_size())?;
+
+            if keep == 0 {
+                bytes = bytes.saturating_add(batch_bytes);
+                keep = 1;
+                if bytes >= max_bytes {
+                    break;
+                }
+                continue;
+            }
+
+            if bytes.saturating_add(batch_bytes) > max_bytes {
+                break;
+            }
+
+            bytes = bytes.saturating_add(batch_bytes);
+            keep += 1;
+        }
+
+        batches.truncate(keep);
+        Ok(bytes)
     }
 
     fn unknown_topic_response(&self, fetch: &FetchTopic) -> Result<FetchableTopicResponse> {
@@ -389,7 +427,7 @@ impl FetchService {
             let mut elapsed = Duration::from_millis(0);
             let mut bytes = 0;
 
-            while elapsed <= max_wait && bytes <= min_bytes {
+            while elapsed <= max_wait {
                 debug!(?elapsed, ?bytes);
 
                 let enumerate = topics.iter().enumerate();
@@ -411,7 +449,7 @@ impl FetchService {
                     responses.push(fetch_response);
                 }
 
-                bytes += u32::try_from(responses.byte_size())?;
+                bytes = u32::try_from(responses.byte_size())?;
 
                 let now = Instant::now();
                 elapsed = now.duration_since(start);
@@ -425,6 +463,10 @@ impl FetchService {
                     ?bytes,
                     ?min_bytes
                 );
+
+                if bytes >= min_bytes || *max_bytes == 0 || remaining.is_zero() {
+                    break;
+                }
 
                 let delay = if remaining.as_millis() >= 250 {
                     remaining / 2

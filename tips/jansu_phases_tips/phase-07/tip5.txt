@@ -1,0 +1,944 @@
+I could not shell-clone GitHub from this environment because DNS resolution failed, but I inspected the repository through the GitHub connector and the live repo page. The repo is currently a multi-crate Rust Kafka-compatible broker with `jansu-broker`, `jansu-storage`, `jansu-sans-io`, compatibility docs, phase logs, and a compatibility ledger; the README describes Jansu as a stateless Kafka-compatible broker with PostgreSQL, SQLite/libSQL, S3, and memory storage, and says compatibility claims are tracked in `docs/compatibility`. ([GitHub][1])
+
+## Phase 07 status after reading the plan and code
+
+Phase 07 is **not ready to mark complete yet**, but it is close. The current implementation is already more than a stub: Produce is routed, validates batches before append, handles `acks=0` suppression, has storage and broker tests, and has ledger entries. The blocker is that it remains unadvertised and ledgered as partial because the project requires proof before compatibility claims: MASTER_PLAN/AGENTS require phase-backed work, focused and broader tests, attempt logs, canonical phase log updates, ledger proof, and audit updates before a phase can be considered done.  
+
+The exact open issue is AUDIT-003: Produce is routed but must stay unadvertised until stable client or differential proof is recorded in the compatibility ledger.  Phase 07’s own phase file requires Kafka-exact normal Produce semantics for `acks=0/1/all`, invalid acks, topic/partition/auth failures, request/message/batch sizes, timestamps, magic, CRC, compression, per-partition errors, schema validation safety, quota/throttle hooks, and client proof with Java and librdkafka.  The current phase log says prior work already added batch validation, metadata prevalidation, CRC checks, positive gzip/lz4/zstd tests, storage mutation safety, broker v0..11 decode tests, and `acks=0` suppression, but it remains pre-advertisement due missing Java/librdkafka proof. 
+
+The most important new finding is a protocol-version gap: the repo’s `ProduceRequest.json` and `ProduceResponse.json` currently stop at `validVersions: "0-11"`, but the official Kafka 4.2 protocol includes Produce v12 and v13, with v13 switching topic addressing to `topic_id => UUID`.   ([Apache Kafka][2]) That means a “100% Kafka 4.2 replacement” claim cannot close Phase 07 honestly unless we either update the descriptors through v13 or explicitly cap the compatibility claim to Produce v0..11. My recommendation is to update to v13 and advertise Produce only after the full test/client matrix passes.
+
+## Phase 07 definition of done
+
+Phase 07 should be declared complete only when all of this is true:
+
+1. `ProduceRequest` and `ProduceResponse` descriptors cover Kafka 4.2 Produce v0..13, including v13 topic UUIDs.
+2. `ProduceService` is Kafka-exact for non-transactional, non-idempotent Produce across v0..13.
+3. Java and librdkafka producer tests pass with `enable.idempotence=false`, because modern Kafka Java producers default idempotence to true and Phase 11 owns durable idempotent producer semantics. Kafka producer docs say idempotence is enabled by default when configs do not conflict, and idempotence requires `acks=all`, retries, and bounded in-flight requests. ([Apache Kafka][3])
+4. Any transactional or idempotent Produce path that is not Phase-07-certified returns a safe Kafka error instead of silently accepting data with weaker semantics.
+5. Snappy is accepted for valid producer batches. Kafka’s message format explicitly lists compression bits `0..4` as none/gzip/snappy/lz4/zstd, and records are compressed as full batches. ([Apache Kafka][4])
+6. CRC validation is performed over the original wire batch bytes, not by re-compressing records and comparing against a canonical local encoding. This is crucial: re-compression can differ across Java/librdkafka/Rust codecs while still being Kafka-valid.
+7. Oversized requests and batches map to Kafka errors. Kafka documents `socket.request.max.bytes` as 104,857,600 bytes and `message.max.bytes` as 1,048,588 bytes in current broker config docs. ([Apache Kafka][5])
+8. Produce is added to `advertised_versions()` only after the ledger row is updated and the compatibility contract passes. The broker currently advertises only ApiVersions and Metadata, while routing Produce internally.  
+
+## Required code changes
+
+### 1. Update Produce protocol descriptors to Kafka 4.2 v13
+
+Patch `jansu-sans-io/message/ProduceRequest.json`:
+
+```diff
+@@
+-  // Version 11 adds support for new error code TRANSACTION_ABORTABLE (KIP-890).
+-  "validVersions": "0-11",
++  // Version 11 adds support for new error code TRANSACTION_ABORTABLE (KIP-890).
++  //
++  // Version 12 keeps the v11 request shape.
++  //
++  // Version 13 addresses topics by topic ID rather than topic name.
++  "validVersions": "0-13",
+@@
+-      { "name": "Name", "type": "string", "versions": "0+", "entityType": "topicName", "mapKey": true,
++      { "name": "Name", "type": "string", "versions": "0-12", "entityType": "topicName", "mapKey": true,
+         "about": "The topic name." },
++      { "name": "TopicId", "type": "uuid", "versions": "13+", "entityType": "topicId", "mapKey": true,
++        "about": "The unique topic ID." },
+       { "name": "PartitionData", "type": "[]PartitionProduceData", "versions": "0+",
+```
+
+Patch `jansu-sans-io/message/ProduceResponse.json`:
+
+```diff
+@@
+-  // Version 11 adds support for new error code TRANSACTION_ABORTABLE (KIP-890).
+-  "validVersions": "0-11",
++  // Version 11 adds support for new error code TRANSACTION_ABORTABLE (KIP-890).
++  //
++  // Version 12 keeps the v11 response shape.
++  //
++  // Version 13 addresses topics by topic ID rather than topic name.
++  "validVersions": "0-13",
+@@
+-      { "name": "Name", "type": "string", "versions": "0+", "entityType": "topicName", "mapKey": true,
++      { "name": "Name", "type": "string", "versions": "0-12", "entityType": "topicName", "mapKey": true,
+         "about": "The topic name" },
++      { "name": "TopicId", "type": "uuid", "versions": "13+", "entityType": "topicId", "mapKey": true,
++        "about": "The unique topic ID." },
+       { "name": "PartitionResponses", "type": "[]PartitionProduceResponse", "versions": "0+",
+```
+
+After this, rebuild `jansu-sans-io`; its `build.rs` generates protocol structs from the JSON descriptors into `OUT_DIR`.  Expect compile fallout where `TopicProduceData.name` and `TopicProduceResponse.name` become `Option<String>` because they are no longer valid in every Produce version. Fix all builders/tests from `.name(topic.into())` to `.name(Some(topic.into()))` and set `.topic_id(Some(id))` where v13 is tested.
+
+### 2. Fix record-batch CRC validation and Snappy encoding
+
+Current deflated record code supports gzip/lz4/zstd encoding and Snappy decoding, but `into_record_data` returns `UnexpectedType` for Snappy.  Also, `Batch::try_from(Bytes)` computes CRC and logs mismatch but does not reject. For Produce exactness, CRC mismatch must be a hard error, and validation must not depend on canonical re-compression.
+
+Patch `jansu-sans-io/src/record/deflated.rs`:
+
+```diff
+@@
+-use std::{fmt::Formatter, io::Write, result};
++use std::{fmt::Formatter, io::Write, result};
+@@
+ impl TryFrom<Bytes> for Batch {
+@@
+-        if computed != crc {
+-            error!(crc, computed);
+-        }
++        if computed != crc {
++            error!(crc, computed);
++            return Err(Error::Message(format!(
++                "record batch crc mismatch: expected {crc}, computed {computed}"
++            )));
++        }
+@@
+ impl Batch {
+@@
+     pub fn is_idempotent(&self) -> bool {
+         self.producer_id != -1 && self.base_sequence != -1
+     }
++
++    pub fn wire_size(&self) -> Result<usize> {
++        usize::try_from(self.batch_length)
++            .map_err(Into::into)
++            .map(|batch_length| size_of::<i64>() + size_of::<i32>() + batch_length)
++    }
++
++    pub fn validate_crc(&self) -> Result<()> {
++        let computed = CrcData::from(self).crc()?;
++        if computed == self.crc {
++            Ok(())
++        } else {
++            Err(Error::Message(format!(
++                "record batch crc mismatch: expected {}, computed {}",
++                self.crc, computed
++            )))
++        }
++    }
+ }
+@@
+         Compression::Gzip => {
+@@
+         }
++
++        Compression::Snappy => {
++            let uncompressed = records.encode()?;
++            let mut snappy = snap::raw::Encoder::new();
++
++            snappy
++                .compress_vec(&uncompressed)
++                .map(Bytes::from)
++                .map_err(Into::into)
++        }
+ 
+         Compression::Lz4 => {
+```
+
+Then remove ProduceService’s “inflate then re-deflate canonical batch and compare `batch_length`/`crc`” check. That canonical check will reject valid Java/librdkafka compressed batches if their compressor emits different but valid bytes. The Kafka-valid check is: parse batch, compute CRC over the original CRC-covered wire section, decode records, validate semantic invariants.
+
+### 3. Refactor ProduceService around version-independent topic identity
+
+Current `ProduceService` uses `topic.name` directly, so v13 topic UUIDs cannot work.  Add a resolver that accepts either name or topic ID, asks storage metadata for the canonical topic, and returns the name needed by `Topition`.
+
+Patch shape for `jansu-storage/src/service/produce.rs`:
+
+```rust
+use std::collections::BTreeSet;
+
+use jansu_sans_io::{
+    Ack, ApiKey, BatchAttribute, ErrorCode, MaximumAllocationSize as _,
+    ProduceRequest, ProduceResponse,
+    produce_request::{PartitionProduceData, TopicProduceData},
+    produce_response::{
+        BatchIndexAndErrorMessage, PartitionProduceResponse, TopicProduceResponse,
+    },
+    record::{Record, deflated},
+};
+
+use crate::{Error, Result, Storage, StorageFeature, TopicId, Topition};
+
+#[derive(Clone, Copy, Debug)]
+struct ProduceLimits {
+    socket_request_max_bytes: usize,
+    message_max_bytes: usize,
+}
+
+impl Default for ProduceLimits {
+    fn default() -> Self {
+        Self {
+            socket_request_max_bytes: 104_857_600,
+            message_max_bytes: 1_048_588,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedProduceTopic {
+    name: String,
+    topic_id: Option<[u8; 16]>,
+    partition_indexes: BTreeSet<i32>,
+    unknown_error: ErrorCode,
+}
+
+impl ProduceService {
+    const MAGIC_V2: i8 = 2;
+
+    fn response_topic_base(
+        &self,
+        name: Option<String>,
+        topic_id: Option<[u8; 16]>,
+    ) -> TopicProduceResponse {
+        let mut response = TopicProduceResponse::default();
+
+        // After descriptor regeneration, Name is valid for v0..12 and TopicId is
+        // valid for v13+. The serializer will emit only fields valid for the
+        // negotiated response version, so setting both when known is safe.
+        response = response.name(name);
+        response = response.topic_id(topic_id);
+
+        response
+    }
+
+    fn partition_error_with_message(
+        &self,
+        index: i32,
+        error_code: ErrorCode,
+        batch_index: Option<i32>,
+        message: Option<String>,
+    ) -> PartitionProduceResponse {
+        let record_errors = batch_index
+            .map(|batch_index| {
+                vec![BatchIndexAndErrorMessage::default()
+                    .batch_index(batch_index)
+                    .batch_index_error_message(message.clone())]
+            })
+            .unwrap_or_default();
+
+        PartitionProduceResponse::default()
+            .index(index)
+            .error_code(error_code.into())
+            .base_offset(-1)
+            .log_append_time_ms(Some(-1))
+            .log_start_offset(Some(0))
+            .record_errors(Some(record_errors))
+            .error_message(message)
+            .current_leader(None)
+    }
+
+    fn partition_error(&self, index: i32, error_code: ErrorCode) -> PartitionProduceResponse {
+        self.partition_error_with_message(index, error_code, None, None)
+    }
+
+    fn map_storage_error(&self, index: i32, error: Error) -> PartitionProduceResponse {
+        match error {
+            Error::Api(error_code) => self.partition_error(index, error_code),
+            Error::Schema(_) => self.partition_error(index, ErrorCode::InvalidRecord),
+            other => {
+                tracing::warn!(?other, "produce storage failure");
+                self.partition_error(index, ErrorCode::UnknownServerError)
+            }
+        }
+    }
+
+    fn topic_error(&self, topic: TopicProduceData, error_code: ErrorCode) -> TopicProduceResponse {
+        let partitions = topic.partition_data.map_or_else(Vec::new, |partitions| {
+            partitions
+                .into_iter()
+                .map(|partition| self.partition_error(partition.index, error_code))
+                .collect()
+        });
+
+        self.response_topic_base(topic.name, topic.topic_id)
+            .partition_responses(Some(partitions))
+    }
+
+    async fn resolve_topic<G>(
+        &self,
+        ctx: &rama::Context<G>,
+        topic: &TopicProduceData,
+    ) -> Result<ResolvedProduceTopic>
+    where
+        G: Storage,
+    {
+        let (topic_key, unknown_error) = match (topic.name.as_deref(), topic.topic_id) {
+            (Some(name), _) => (TopicId::from(name), ErrorCode::UnknownTopicOrPartition),
+            (None, Some(topic_id)) => (TopicId::from(topic_id), ErrorCode::UnknownTopicId),
+            (None, None) => return Err(Error::Api(ErrorCode::InvalidRequest)),
+        };
+
+        let metadata = ctx
+            .state()
+            .metadata(Some(&[topic_key]))
+            .await
+            .map_err(|error| match error {
+                Error::Api(error_code) => Error::Api(error_code),
+                other => {
+                    tracing::warn!(?other, "metadata lookup failed during produce");
+                    Error::Api(ErrorCode::UnknownServerError)
+                }
+            })?;
+
+        let topic_meta = metadata
+            .topics()
+            .iter()
+            .find(|candidate| candidate.error_code == i16::from(ErrorCode::None))
+            .ok_or(Error::Api(unknown_error))?;
+
+        let name = topic_meta
+            .name
+            .clone()
+            .ok_or(Error::Api(unknown_error))?;
+
+        let partitions = topic_meta
+            .partitions
+            .as_deref()
+            .ok_or(Error::Api(unknown_error))?
+            .iter()
+            .map(|partition| partition.partition_index)
+            .collect::<BTreeSet<_>>();
+
+        Ok(ResolvedProduceTopic {
+            name,
+            topic_id: topic_meta.topic_id,
+            partition_indexes: partitions,
+            unknown_error,
+        })
+    }
+
+    fn validate_batch(
+        &self,
+        batch_index: usize,
+        batch: &deflated::Batch,
+        limits: ProduceLimits,
+        producer_state_enabled: bool,
+        transactions_enabled: bool,
+    ) -> Result<Vec<Record>> {
+        let attribute = BatchAttribute::try_from(batch.attributes).map_err(|error| match error {
+            jansu_sans_io::Error::UnknownCompressionType(_) => {
+                Error::Api(ErrorCode::UnsupportedCompressionType)
+            }
+            other => Error::from(other),
+        })?;
+
+        if batch.magic != Self::MAGIC_V2 {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        if batch.wire_size()? > limits.message_max_bytes {
+            return Err(Error::Api(ErrorCode::MessageTooLarge));
+        }
+
+        if batch.is_control() {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        if batch.is_transactional() && !transactions_enabled {
+            return Err(Error::Api(ErrorCode::InvalidTxnState));
+        }
+
+        if batch.is_idempotent() && !producer_state_enabled {
+            return Err(Error::Api(ErrorCode::UnknownProducerId));
+        }
+
+        if batch.base_timestamp < 0
+            || batch.max_timestamp < 0
+            || batch.max_timestamp < batch.base_timestamp
+        {
+            return Err(Error::Api(ErrorCode::InvalidTimestamp));
+        }
+
+        batch
+            .validate_crc()
+            .map_err(|_| Error::Api(ErrorCode::CorruptMessage))?;
+
+        let records = Vec::<Record>::try_from(batch).map_err(|error| {
+            tracing::debug!(?error, batch_index, "failed to inflate record batch");
+            Error::Api(ErrorCode::CorruptMessage)
+        })?;
+
+        if records.is_empty() {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        if batch.record_count != u32::try_from(records.len())? {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        if batch.last_offset_delta != i32::try_from(records.len() - 1)? {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        for (index, record) in records.iter().enumerate() {
+            if record.offset_delta != i32::try_from(index)? {
+                return Err(Error::Api(ErrorCode::InvalidRecord));
+            }
+
+            let timestamp = batch
+                .base_timestamp
+                .checked_add(record.timestamp_delta)
+                .ok_or(Error::Api(ErrorCode::InvalidTimestamp))?;
+
+            if timestamp < 0 || timestamp > batch.max_timestamp {
+                return Err(Error::Api(ErrorCode::InvalidTimestamp));
+            }
+        }
+
+        let _ = attribute;
+        Ok(records)
+    }
+}
+```
+
+Then change the partition path so it validates every batch in the partition before appending any batch in that partition:
+
+```rust
+async fn partition<G>(
+    &self,
+    ctx: &rama::Context<G>,
+    transactional_id: Option<&str>,
+    resolved: &ResolvedProduceTopic,
+    partition: PartitionProduceData,
+) -> PartitionProduceResponse
+where
+    G: Storage,
+{
+    if !resolved.partition_indexes.contains(&partition.index) {
+        return self.partition_error(partition.index, resolved.unknown_error);
+    }
+
+    if transactional_id.is_some()
+        && !ctx.state().capabilities().supports(StorageFeature::Transactions)
+    {
+        return self.partition_error(partition.index, ErrorCode::InvalidTxnState);
+    }
+
+    let Some(records) = partition.records else {
+        return self.partition_error(partition.index, ErrorCode::InvalidRecord);
+    };
+
+    let producer_state_enabled = ctx
+        .state()
+        .capabilities()
+        .supports(StorageFeature::ProducerState);
+
+    let transactions_enabled = ctx
+        .state()
+        .capabilities()
+        .supports(StorageFeature::Transactions);
+
+    let limits = ProduceLimits::default();
+
+    for (batch_index, batch) in records.batches.iter().enumerate() {
+        if let Err(error) = self.validate_batch(
+            batch_index,
+            batch,
+            limits,
+            producer_state_enabled,
+            transactions_enabled,
+        ) {
+            let error_code = match error {
+                Error::Api(error_code) => error_code,
+                Error::Schema(_) => ErrorCode::InvalidRecord,
+                _ => ErrorCode::UnknownServerError,
+            };
+
+            return self.partition_error_with_message(
+                partition.index,
+                error_code,
+                Some(i32::try_from(batch_index).unwrap_or(i32::MAX)),
+                Some(error_code.to_string()),
+            );
+        }
+    }
+
+    let topition = Topition::new(resolved.name.clone(), partition.index);
+    let mut base_offset = None;
+
+    for batch in records.batches {
+        match ctx.state().produce(transactional_id, &topition, batch).await {
+            Ok(offset) => {
+                let _ = base_offset.get_or_insert(offset);
+            }
+            Err(error) => return self.map_storage_error(partition.index, error),
+        }
+    }
+
+    base_offset.map_or_else(
+        || self.partition_error(partition.index, ErrorCode::InvalidRecord),
+        |base_offset| {
+            PartitionProduceResponse::default()
+                .index(partition.index)
+                .error_code(ErrorCode::None.into())
+                .base_offset(base_offset)
+                .log_append_time_ms(Some(-1))
+                .log_start_offset(Some(0))
+                .record_errors(Some(vec![]))
+                .error_message(None)
+                .current_leader(None)
+        },
+    )
+}
+```
+
+And change `serve()` to validate request size, validate acks through the `Ack` enum, resolve topics once, then process partitions:
+
+```rust
+impl<G> rama::Service<G, ProduceRequest> for ProduceService
+where
+    G: Storage,
+{
+    type Response = ProduceResponse;
+    type Error = Error;
+
+    async fn serve(
+        &self,
+        ctx: rama::Context<G>,
+        req: ProduceRequest,
+    ) -> Result<Self::Response> {
+        let limits = ProduceLimits::default();
+
+        if req.maximum_allocation_size()? > limits.socket_request_max_bytes {
+            return Ok(self.invalid_request_sized_response(req, ErrorCode::InvalidRequest));
+        }
+
+        let _ack = match Ack::try_from(req.acks) {
+            Ok(ack) => ack,
+            Err(_) => return Ok(self.invalid_acks_response(req)),
+        };
+
+        let mut responses = Vec::with_capacity(req.topic_data.as_ref().map_or(0, Vec::len));
+
+        if let Some(topics) = req.topic_data {
+            for topic in topics {
+                let resolved = match self.resolve_topic(&ctx, &topic).await {
+                    Ok(resolved) => resolved,
+                    Err(Error::Api(error_code)) => {
+                        responses.push(self.topic_error(topic, error_code));
+                        continue;
+                    }
+                    Err(other) => {
+                        tracing::warn!(?other, "produce topic resolution failed");
+                        responses.push(self.topic_error(topic, ErrorCode::UnknownServerError));
+                        continue;
+                    }
+                };
+
+                let mut partition_responses = Vec::new();
+
+                if let Some(partition_data) = topic.partition_data {
+                    for partition in partition_data {
+                        partition_responses.push(
+                            self.partition(
+                                &ctx,
+                                req.transactional_id.as_deref(),
+                                &resolved,
+                                partition,
+                            )
+                            .await,
+                        );
+                    }
+                }
+
+                responses.push(
+                    self.response_topic_base(Some(resolved.name), resolved.topic_id)
+                        .partition_responses(Some(partition_responses)),
+                );
+            }
+        }
+
+        Ok(ProduceResponse::default()
+            .responses(Some(responses))
+            .throttle_time_ms(Some(0))
+            .node_endpoints(None))
+    }
+}
+```
+
+The exact helper `invalid_request_sized_response` should mirror `invalid_acks_response` and return a per-partition error response. For request-size overflow, Kafka parity should be checked against the differential harness; my first mapping would be `InvalidRequest` for full request too large and `MessageTooLarge` for a partition batch over `message.max.bytes`.
+
+### 4. Keep `acks=0` dispatch but suppress exactly one wire response
+
+`jansu-service/src/frame.rs` and `jansu-service/src/stream.rs` both contain Produce `acks=0` suppression logic.   Finish Phase 07 by making this a single, tested responsibility:
+
+```rust
+// Preferred: Frame layer owns protocol response suppression.
+// Stream layer should only skip writes for `None`, not re-derive Produce semantics.
+```
+
+The invariant to test is:
+
+```text
+acks=0 request reaches ProduceService and mutates storage.
+acks=0 never writes a response frame.
+acks=1 and acks=-1 write exactly one response frame.
+```
+
+### 5. Add Produce advertisement only after proof
+
+Once the tests below pass, update `jansu-broker/src/service.rs`:
+
+```diff
+ use jansu_sans_io::{ApiKey as _, ApiVersionsRequest, MetadataRequest};
++use jansu_sans_io::ProduceRequest;
+@@
+         (
+             MetadataRequest::KEY,
+             ApiVersionRange {
+                 min_version: 12,
+                 max_version: 12,
+             },
+         ),
++        (
++            ProduceRequest::KEY,
++            ApiVersionRange {
++                min_version: 0,
++                max_version: 13,
++            },
++        ),
+```
+
+Do **not** make this change first. The compatibility contract compares broker advertisements to ledger-approved advertisements, and the ledger currently has Produce as unadvertised/partial.  
+
+## Required test additions
+
+### `jansu-sans-io`
+
+Add codec tests:
+
+```rust
+#[test]
+fn snappy_round_trips_record_batch() -> Result<()> {
+    let mut inflated = inflated::Batch::builder()
+        .record(Record::builder().value(Bytes::from_static(b"snappy-value").into()))
+        .build()?;
+
+    inflated.attributes = BatchAttribute::try_from(inflated.attributes)?
+        .compression(Compression::Snappy)
+        .into();
+
+    let deflated = deflated::Batch::try_from(inflated.clone())?;
+    assert_eq!(Compression::Snappy, Compression::try_from(deflated.attributes)?);
+
+    let records = Vec::<Record>::try_from(deflated)?;
+    assert_eq!(1, records.len());
+    assert_eq!(Some(Bytes::from_static(b"snappy-value")), records[0].value);
+    Ok(())
+}
+
+#[test]
+fn crc_mismatch_is_decode_error() {
+    let mut encoded = valid_record_batch_fixture();
+    let last = encoded.len() - 1;
+    encoded[last] ^= 0x01;
+
+    assert!(deflated::Batch::try_from(Bytes::from(encoded)).is_err());
+}
+```
+
+Add a Java/librdkafka compressed fixture acceptance test. This is critical because the current canonical re-compression check can pass Jansu-generated gzip/lz4/zstd while still rejecting valid client-generated compressed batches.
+
+```rust
+#[test]
+fn accepts_java_gzip_fixture_without_canonical_recompression() -> Result<()> {
+    let batch = deflated::Batch::try_from(Bytes::from_static(include_bytes!(
+        "fixtures/java-produce-v11-gzip.batch"
+    )))?;
+
+    batch.validate_crc()?;
+    let records = Vec::<Record>::try_from(batch)?;
+    assert!(!records.is_empty());
+    Ok(())
+}
+```
+
+### `jansu-storage/tests/produce_exactness.rs`
+
+Current storage tests already cover invalid/valid acks, unknown topic, invalid partition, invalid magic, bad CRC, supported none/gzip/lz4/zstd, prevalidation, record-count mismatch, batch-length mismatch, invalid timestamp, partition independence, and schema failure offset safety.  Add:
+
+```text
+valid_snappy_batch_is_accepted
+valid_java_gzip_batch_is_accepted
+valid_librdkafka_snappy_batch_is_accepted
+oversized_batch_returns_message_too_large_without_append
+oversized_request_returns_invalid_request_without_append
+produce_v13_topic_id_resolves_and_appends
+produce_v13_unknown_topic_id_returns_unknown_topic_id
+topic_name_and_topic_id_mismatch_returns_inconsistent_topic_id
+transactional_id_returns_invalid_txn_state_until_transactions_certified
+idempotent_batch_without_producer_state_returns_unknown_producer_id
+acks_all_maps_to_success_for_single-leader-certified-storage
+acks_all_returns_not_enough_replicas_for_storage_without_required_commit_feature
+```
+
+The topic ID tests can use existing `TopicId` support in storage; `TopicId` already supports `Name(String)`, `Id(Uuid)`, `From<[u8; 16]>`, and metadata request conversions. ([GitHub][6])
+
+### `jansu-broker/tests/produce_exactness.rs`
+
+Current broker tests assert Produce is not advertised, `acks=0` suppression v0..11, and v0..11 decode/response behavior.  Replace the “not advertised” assertion after ledger proof, and expand the version matrix:
+
+```text
+api_versions_advertises_produce_v0_to_v13_after_ledger_approval
+produce_request_decodes_for_versions_0_through_13
+produce_response_encodes_for_versions_0_through_13
+acks_0_suppresses_wire_response_for_versions_0_through_13
+acks_1_returns_partition_offsets_for_versions_0_through_13
+acks_all_returns_partition_offsets_for_versions_0_through_13
+produce_v13_uses_topic_id_response_not_topic_name
+invalid_acks_returns_invalid_required_acks_for_versions_0_through_13
+```
+
+### Client/differential proof
+
+Add a stable proof harness under something like:
+
+```text
+tests/compat/produce/
+  java/
+    build.gradle.kts
+    src/test/java/io/jansu/compat/ProduceMatrixTest.java
+  librdkafka/
+    produce_matrix.py or produce_matrix.c
+  produce_matrix.sh
+  fixtures/
+```
+
+Matrix:
+
+```text
+clients:
+  - Apache Kafka Java client 4.2.x
+  - librdkafka stable release
+
+brokers:
+  - Apache Kafka 4.2.x reference broker
+  - Jansu
+
+storage:
+  - memory for fast CI proof
+  - postgres for production-parity proof
+  - sqlite/slatedb/s3 as limited-parity proof if available
+
+acks:
+  - 0
+  - 1
+  - all
+
+compression:
+  - none
+  - gzip
+  - snappy
+  - lz4
+  - zstd
+
+producer config:
+  - enable.idempotence=false
+  - transactional.id unset
+  - retries=0 for non-idempotent Phase 07 proof
+  - max.in.flight.requests.per.connection=1 for deterministic ordering checks
+
+payloads:
+  - empty value
+  - null key
+  - non-null key
+  - headers
+  - explicit timestamp
+  - multi-record batch
+  - multi-partition topic
+  - multi-topic request
+```
+
+Assertions:
+
+```text
+Produce send succeeds or fails with the same Kafka error class/code as Apache Kafka.
+Produced records are fetchable in order.
+Offsets are contiguous per partition.
+acks=0 produces no response but the records become visible.
+Invalid topic/partition does not mutate offsets.
+Invalid CRC/size/timestamp/magic does not mutate offsets.
+Compression round-trips through Fetch/consumer.
+```
+
+This directly closes AUDIT-003 because it converts unit-test confidence into ledger-backed client proof.
+
+## Compatibility ledger and contract updates
+
+### Ledger row for API key 0
+
+Update `docs/compatibility/kafka-4.2-ledger.json` row `api_key: 0`:
+
+```json
+{
+  "api_key": 0,
+  "name": "Produce",
+  "descriptor_versions": { "min": 0, "max": 13 },
+  "codec_status": "present",
+  "route_status": "routed",
+  "current_advertised_versions": { "min": 0, "max": 13 },
+  "approved_advertised_versions": { "min": 0, "max": 13 },
+  "semantic_status": "compatible",
+  "phase_owner": "07",
+  "profiles": {
+    "jansu-native": "green",
+    "kafka-parity-postgres": "green",
+    "kafka-parity-sqlite": "yellow",
+    "kafka-parity-s3-dynostore": "yellow",
+    "kafka-parity-slatedb": "yellow",
+    "compat-preview": "green"
+  },
+  "proof": {
+    "unit_tests": [
+      "jansu-sans-io::record::deflated::tests::snappy_round_trips_record_batch",
+      "jansu-storage/tests/produce_exactness.rs::valid_snappy_batch_is_accepted",
+      "jansu-storage/tests/produce_exactness.rs::oversized_batch_returns_message_too_large_without_append",
+      "jansu-storage/tests/produce_exactness.rs::produce_v13_topic_id_resolves_and_appends",
+      "jansu-broker/tests/produce_exactness.rs::produce_request_decodes_for_versions_0_through_13",
+      "jansu-broker/tests/produce_exactness.rs::acks_0_suppresses_wire_response_for_versions_0_through_13"
+    ],
+    "differential_tests": [
+      "tests/compat/produce/produce_matrix.sh::apache-kafka-4.2-vs-jansu",
+      "jansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs"
+    ],
+    "client_tests": {
+      "java": {
+        "client": "org.apache.kafka:kafka-clients:4.2.x",
+        "scope": "non-transactional, enable.idempotence=false",
+        "matrix": "acks=0,1,all; compression=none,gzip,snappy,lz4,zstd; versions=0..13"
+      },
+      "librdkafka": {
+        "scope": "non-transactional, enable.idempotence=false",
+        "matrix": "acks=0,1,all; compression=none,gzip,snappy,lz4,zstd"
+      }
+    },
+    "failure_modes": "tested"
+  },
+  "notes": "Phase 07 complete for non-transactional, non-idempotent Produce. Idempotent producer remains Phase 11; transactions remain Phase 12."
+}
+```
+
+### Compatibility contract
+
+`compatibility_contract.rs` currently allows `semantic_status = "compatible"` but hard-codes `proof.failure_modes == "untested"` for every row.  That should be fixed; otherwise the ledger will lie after Phase 07 failure-mode tests land.
+
+Patch:
+
+```diff
+ const ALLOWED_SEMANTIC_STATUSES: [&str; 6] = [
+@@
+ ];
++
++const ALLOWED_FAILURE_MODE_STATUSES: [&str; 3] = [
++    "untested",
++    "partial",
++    "tested",
++];
+@@
+-        assert_eq!("untested", row.proof.failure_modes);
++        assert_allowed_value(
++            row.proof.failure_modes.as_str(),
++            &ALLOWED_FAILURE_MODE_STATUSES,
++        );
++
++        if row.semantic_status == "compatible" {
++            assert_ne!(
++                "untested",
++                row.proof.failure_modes,
++                "compatible api_key {} must have tested or partial failure-mode proof",
++                row.api_key
++            );
++        }
+```
+
+Also add a Produce-specific assertion:
+
+```rust
+if row.api_key == ProduceRequest::KEY && row.semantic_status == "compatible" {
+    assert_eq!(Some(VersionRange { min: 0, max: 13 }), row.approved_advertised_versions);
+    assert!(
+        row.proof.client_tests
+            .as_object()
+            .is_some_and(|tests| tests.contains_key("java") && tests.contains_key("librdkafka")),
+        "compatible Produce must include Java and librdkafka proof"
+    );
+}
+```
+
+## Phase logs and AUDIT updates
+
+After code and validation:
+
+1. Update `phase-logs/07-produce-exactness.md.log` with files touched, ledger rows touched, tests added, commands, outcomes, and residual risks. The phase log format is enforced by the compatibility contract. 
+2. Add an attempt log under `phase-logs/attempts/07/...`.
+3. Update `phase-logs/index.json`: Phase 07 can move out of `in-progress` only if the manifest allowed statuses are extended beyond the current `legacy-unlogged`, `legacy-complete`, `in-progress`; otherwise keep `in-progress` until the project status taxonomy is updated. 
+4. Mark AUDIT-003 resolved with the client proof paths and ledger row.
+5. Add a new AUDIT item for the explicit remaining scope: “Default Java producer idempotence remains Phase 11” unless Phase 11 is completed in the same PR.
+
+## Validation commands
+
+Run these before advertising Produce:
+
+```bash
+cargo fmt --all --check
+cargo check --workspace --all-features --all-targets
+
+cargo test -p jansu-sans-io --lib record::deflated --all-features -- --nocapture
+cargo test -p jansu-storage --test produce_exactness --all-features -- --nocapture
+cargo test -p jansu-broker --test produce_exactness --all-features -- --nocapture
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+
+cargo nextest run --workspace --all-targets --all-features --no-fail-fast --exclude fuzz
+cargo clippy --workspace --all-features --all-targets -- -D warnings
+```
+
+Run client proof:
+
+```bash
+tests/compat/produce/produce_matrix.sh --reference apache-kafka-4.2 --target jansu --storage memory
+tests/compat/produce/produce_matrix.sh --reference apache-kafka-4.2 --target jansu --storage postgres
+tests/compat/produce/produce_matrix.sh --reference apache-kafka-4.2 --target jansu --storage sqlite
+tests/compat/produce/produce_matrix.sh --reference apache-kafka-4.2 --target jansu --storage slatedb
+```
+
+Then run smoke checks with Kafka CLI tooling:
+
+```bash
+kafka-topics --bootstrap-server "$ADVERTISED_LISTENER" \
+  --create --topic phase07-produce --partitions 3 --replication-factor 1
+
+kafka-producer-perf-test --bootstrap-server "$ADVERTISED_LISTENER" \
+  --topic phase07-produce \
+  --num-records 10000 \
+  --record-size 256 \
+  --throughput -1 \
+  --producer-props enable.idempotence=false acks=all compression.type=snappy
+
+kafka-console-consumer --bootstrap-server "$ADVERTISED_LISTENER" \
+  --topic phase07-produce \
+  --from-beginning \
+  --timeout-ms 15000 \
+  --property print.offset=true \
+  --property print.partition=true
+```
+
+## Final closure sequence
+
+The PR should be ordered like this:
+
+1. Descriptor update to Produce v13.
+2. Generated-code fallout fixes.
+3. CRC validation fix and Snappy encode support.
+4. ProduceService topic-ID, size-limit, safe idempotent/transactional error, and record-error response refactor.
+5. Tests for sans-io, storage, broker wire behavior, and v0..13 matrix.
+6. Java/librdkafka differential proof.
+7. Ledger, compatibility contract, phase log, attempt log, index, and AUDIT updates.
+8. Add Produce to advertised API versions.
+
+Once those land, Phase 07 can be marked complete for **non-transactional, non-idempotent Produce exactness through Kafka 4.2 Produce v13**. Phase 11 still owns default modern Java idempotent producer compatibility; Phase 12 still owns transactions.
+
+[1]: https://github.com/jeppsontaylor/jansu "GitHub - jeppsontaylor/jansu: 100% Rust, 100% Kafka replacement, F**k the JVM · GitHub"
+[2]: https://kafka.apache.org/42/design/protocol/ "Protocol | Apache Kafka"
+[3]: https://kafka.apache.org/40/configuration/producer-configs/?utm_source=chatgpt.com "Producer Configs | Apache Kafka"
+[4]: https://kafka.apache.org/42/implementation/message-format/?utm_source=chatgpt.com "Message Format | Apache Kafka"
+[5]: https://kafka.apache.org/37/configuration/broker-configs/?utm_source=chatgpt.com "Broker Configs | Apache Kafka"
+[6]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/jansu-storage/src/lib.rs "raw.githubusercontent.com"
+

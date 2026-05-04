@@ -10,7 +10,7 @@ Goal: Make Fetch, ListOffsets, and OffsetForLeaderEpoch exact, including timesta
 
 Current code anchors:
 - `jansu-storage/src/service/fetch.rs` handles Fetch, high watermark, last stable offset, log start offset, and empty responses.
-- `jansu-storage/src/service/list_offsets.rs` handles ListOffsets and currently returns a fixed leader epoch value.
+- `jansu-storage/src/service/list_offsets.rs` handles ListOffsets; partition leader epochs are resolved from storage (`leader_epoch_history` / `offset_for_leader_epoch`) with Kafka-style error and wire handling for mixed valid/invalid partitions (see `jansu-broker/tests/list_offsets.rs`).
 - `jansu-storage/src/lib.rs` exposes `offset_stage`, `fetch`, and `list_offsets`.
 - `jansu-storage/src/sql/list_latest_offset_*.sql` contains SQL offset query assets.
 - `jansu-broker/tests/fetch.rs` and `jansu-broker/tests/list_offsets.rs` cover current behavior.
@@ -43,3 +43,37 @@ Do not do:
 - Do not return empty success for cases Kafka treats as fencing, unknown epoch, or offset errors.
 
 Fresh session handoff: Start by adding leader epoch requirements to the storage/log contract, then implement ListOffsets and Fetch fixes. Leave API 23 unadvertised until historical epoch tests pass.
+
+---
+
+## Supplement 2026-05-04 — Implementation status (append-only)
+
+- **ListOffsets leader epoch:** No longer a hardcoded constant; broker/storage paths use epoch history where implemented (DynoStore, libSQL, SlateDB patterns in `jansu-storage`; Postgres follows the same SQL assets where wired). See `phase-logs/08-fetch-list-offsets-leader-epoch.md.log` for session history.
+- **API 23 (`OffsetForLeaderEpoch`):** Routed through the broker stack but **not** advertised in ApiVersions until ledger `semantic_status`, storage certification, and failure-mode proofs catch up (`docs/compatibility/kafka-4.2-ledger.json` api_key 23).
+- **Flexible protocol:** `jansu-sans-io` encoder now emits Kafka JSON **defaults** for non-nullable `Option` fields on flexible messages when serde serializes `None` (e.g. `CurrentLeaderEpoch` default `-1` on ListOffsets / Fetch partition requests), so request frames round-trip on the wire without requiring callers to set `Some(-1)` manually.
+- **Fetch byte-accounting progress:** `FetchService` now stops polling without sleeping once a response satisfies `min_bytes`, accounts bytes per poll attempt instead of cumulatively across empty retries, and caps each partition by `partition_max_bytes` before spending global `max_bytes`. Focused dynostore storage tests cover the no-extra-wait and partition limit behavior; broker Fetch passes across dynostore, libsql, and slatedb.
+- **Residual (unchanged acceptance gate):** read_committed + LSO + aborted transactions, incremental fetch sessions vs version cap, topic ID behavior, broader max-bytes parity, truncation/recovery proofs, Java/librdkafka differential seeks, and API 23 advertisement remain open until tests and ledger rows justify each claim.
+
+---
+
+## Supplement 2026-05-03 — Agent routing (next phase)
+
+With **Phase 04**, **Phase 07**, and **Phase 10** marked complete in `MASTER_PLAN.md`, the next **logical** execution target for Kafka-parity work is **this phase (08)**—priority queue position **2**, manifest status **in-progress**, and `AUDIT-004` still open. **Phase 09** may proceed in parallel only when file ownership stays disjoint from Fetch/ListOffsets/epoch storage (`MASTER_PLAN.md` parallel rules). Phase **11** must wait until Produce (07) and chosen 08/09 surfaces are stable per plan.
+
+## Supplement 2026-05-03 — Differential evidence (ListOffsets + Fetch consume)
+
+- **Harness:** `jansu-broker/tests/differential_lab.rs::differential_listoffsets_latest_and_fetch_consume_after_produce` (requires `JANSU_DIFFERENTIAL=1` and Kafka 4.2 baseline per Phase 04).
+- **Checks:** After identical librdkafka Produce to partition 0, wire **ListOffsets v9** `Latest` high-watermark must match Kafka vs Jansu; librdkafka **StreamConsumer** assigned to beginning must return identical payloads in order (Fetch path).
+- **Ledger:** `docs/compatibility/kafka-4.2-ledger.json` API keys **1** and **2** include this test under `differential_tests`; APIs remain **unadvertised** — acceptance gate and “do not advertise Fetch versions requiring incremental sessions” rules unchanged.
+
+## Supplement 2026-05-04 — Differential ListOffsets Earliest
+
+- The same `differential_listoffsets_latest_and_fetch_consume_after_produce` workload now asserts **ListOffsets v9 Earliest** returns the log start offset matching Kafka (expected **0** after produce from base offset 0), in addition to **Latest** HWM and librdkafka consume parity. Wire helper refactored to `list_offsets_partition_offset` with explicit correlation ids per request. The test is **not** `#[ignore]` — it runs whenever `JANSU_DIFFERENTIAL=1` (otherwise it skips immediately like other differential tests).
+
+## Supplement 2026-05-05 — Produce differential default run
+
+- **`differential_produce_round_trip_for_advertised_api`** is no longer `#[ignore]`; it matches Phase 07 advertised Produce and the ledger API key **0** `differential_tests` row. With `JANSU_DIFFERENTIAL=1`, one `cargo test -p jansu-broker --test differential_lab` run now includes ApiVersions, Metadata, Produce librdkafka round-trip, and ListOffsets/Fetch read evidence (except the intentionally ignored full lifecycle placeholder).
+
+## Supplement 2026-05-05 — Fetch ReadCommitted (non-txn) proof
+
+- **`jansu-storage/tests/fetch.rs::phase08::fetch_read_committed_matches_uncommitted_when_no_transactions`** asserts `FetchService` returns identical record counts for **ReadUncommitted** vs **ReadCommitted** on dynostore memory when there are no open transactions (LSO == HWM). This does **not** certify transactional read_committed or aborted-txn filtering (Phase 12 / broader Phase 08 backlog).

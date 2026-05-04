@@ -289,6 +289,26 @@ kafka39:
 kafka41:
     docker run --rm -p 9092:9092 apache/kafka:4.1.0
 
+# Start the Kafka 4.2 reference broker for Phase 04 differential testing
+differential-kafka-up:
+    docker compose -f etc/differential/compose.kafka-4.2.yaml up --wait --detach kafka42
+
+# Stop and clean up the Kafka 4.2 reference broker
+differential-kafka-down:
+    docker compose -f etc/differential/compose.kafka-4.2.yaml down --volumes --remove-orphans
+
+# Run the Phase 04 differential lab tests (requires Docker or JANSU_DIFF_KAFKA_BOOTSTRAP)
+differential-lab:
+    JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture --test-threads=1
+
+# Run the differential lab against an existing Kafka bootstrap
+differential-lab-external bootstrap:
+    JANSU_DIFFERENTIAL=1 JANSU_DIFF_KAFKA_BOOTSTRAP={{ bootstrap }} CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture --test-threads=1
+
+# Run Kafka CLI fixtures against a target bootstrap
+differential-cli-fixture target bootstrap artifact_dir="target/differential/cli":
+    scripts/differential/kafka-cli-fixtures.sh {{ bootstrap }} {{ target }} {{ artifact_dir }}
+
 codespace-create:
     gh codespace create \
         --repo $(gh repo view --json nameWithOwner --jq .nameWithOwner) \

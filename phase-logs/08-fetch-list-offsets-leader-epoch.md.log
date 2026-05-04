@@ -153,6 +153,314 @@
 
 ## Residual Risks
 
-- Broker ListOffsets wire-level tests fail for mixed-partition error and produced-epoch cases with `KafkaProtocol(Message("overflow"))` or `UnexpectedEof`; direct storage ListOffsets proof passes.
 - API 23 is still unadvertised pending differential/client proof.
 - Leader epoch truncation/recovery and read-committed transaction integration remain unproven.
+- Fetch long-polling byte accounting and partition_max_bytes enforcement not yet hardened.
+
+---
+
+## Session 3 — 2026-05-04: ListOffsetsService Rewrite & Wire Failure Resolution
+
+### Changes
+
+1. **ListOffsetsService Rewrite** (`jansu-storage/src/service/list_offsets.rs`): Replaced the BTreeSet-based topic reconstruction with a planned-slot approach that preserves request topology. The service now:
+   - Walks request topics/partitions in order
+   - Pre-validates partition existence via `leader_epoch_history`
+   - Validates `current_leader_epoch` fencing (stale → FencedLeaderEpoch, future → UnknownLeaderEpoch, -1 → no fencing)
+   - Calls storage only for valid partitions
+   - Synthesizes `UnknownTopicOrPartition` for non-existent partitions
+
+2. **Leader Epoch Helpers** (`jansu-storage/src/service/leader_epoch.rs`): Added `current_leader_epoch_error` for Kafka-compatible fencing semantics and `leader_epoch_for_offset` for epoch-at-offset resolution.
+
+3. **Broker Test Fix** (`jansu-broker/tests/list_offsets.rs`): Added missing `.current_leader_epoch(Some(-1))` to `leader_epoch_tracks_produced_epoch` request, resolving the `UnexpectedEof` in the v9 flexible encoding path.
+
+4. **Storage Test Updates** (`jansu-storage/tests/list_offsets.rs`): Updated `req` and `response_frame_round_trips_for_mixed_partition_errors` tests to expect `UnknownTopicOrPartition` for non-existent topics (correct Kafka behavior).
+
+### Files Changed
+
+- `jansu-storage/src/service/list_offsets.rs` — full rewrite
+- `jansu-storage/src/service/leader_epoch.rs` — added fencing and epoch-for-offset helpers
+- `jansu-broker/tests/list_offsets.rs` — test fix
+- `jansu-storage/tests/list_offsets.rs` — test assertion updates
+- `AUDIT.md` — updated AUDIT-004
+- `phase-logs/08-fetch-list-offsets-leader-epoch.md.log` — this session
+- `phase-logs/index.json` — residual risks update
+
+### Verification Results
+
+- Broker ListOffsets (dynostore): 11/11 pass
+- Broker ListOffsets (dynostore+libsql+slatedb): 21/21 pass
+- Storage offset_for_leader_epoch: 7/7 pass
+- Storage list_offsets: 4/4 pass
+- Broker Fetch: 2/2 pass
+- Compatibility contract: 15/15 pass (1 ignored)
+- Cargo check all targets: clean
+- ListOffsets doctest: pass
+
+### Residual Risks
+
+- API 23 remains unadvertised until differential/client proof.
+- Fetch long-polling byte accounting not yet hardened.
+- Leader epoch truncation/recovery remains unproven.
+- Read-committed transaction integration untested for ListOffsets/Fetch.
+
+---
+
+## Supplement 2026-05-04 — Flexible request defaults (`jansu-model` / `jansu-sans-io`)
+
+### Intent
+
+Encode Kafka JSON `default` values on the wire when flexible-message structs use `Option<T>` with `None` but the field is present for the API version (fixes mis-aligned decode when clients omit ignorable fields such as `CurrentLeaderEpoch`).
+
+### Files Touched
+
+- `jansu-model/src/lib.rs` — `FieldMeta.default: Option<&'static str>`; `Field::kafka_default()`.
+- `jansu-sans-io/build.rs` — embed defaults into generated `FieldMeta`.
+- `jansu-sans-io/src/ser.rs` — `serialize_schema_default_for_none` from `serialize_none`.
+- `jansu-sans-io/tests/codec.rs` — ListOffsets v9 request byte round-trip assertion.
+- `jansu-broker/tests/list_offsets.rs` — omit redundant `current_leader_epoch(Some(-1))` on v9 requests covered by encoder defaults.
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md` — spec sync (append-only).
+- `AUDIT.md` — AUDIT-004 note.
+
+### Verification Commands
+
+- `cargo build -p jansu-sans-io`
+- `cargo test -p jansu-sans-io list_offsets_request_v9_round_trip`
+- `cargo test -p jansu-broker --test list_offsets lite::mixed_partition_errors storage_route_round_trips_list_offsets_v9 --all-features` (run filters separately if needed)
+- `just compatibility-contract` — 16 passed, 1 ignored
+
+### Outcomes
+
+- ListOffsets v9 request frames round-trip at the byte level without setting `current_leader_epoch` or invalid v9-only fields in tests.
+- AUDIT-004 remaining scope unchanged for Fetch/LSO/API 23/differential work.
+
+---
+
+## Date
+
+- 2026-05-04
+
+## Phase File
+
+- tips/phases/08-fetch-list-offsets-leader-epoch.md
+
+## Intent
+
+- Harden Fetch long-poll byte accounting and `partition_max_bytes` behavior without advertising new Fetch or API 23 versions.
+
+## Files Touched
+
+- AUDIT.md
+- docs/compatibility/kafka-4.2-ledger.json
+- jansu-sans-io/src/ser.rs
+- jansu-sans-io/tests/codec.rs
+- jansu-storage/src/service/fetch.rs
+- jansu-storage/src/sql/producer_select_for_update.sql
+- jansu-storage/tests/fetch.rs
+- phase-logs/08-fetch-list-offsets-leader-epoch.md.log
+- phase-logs/attempts/08-fetch-list-offsets-leader-epoch/20260503-195656-codex.md
+- phase-logs/index.json
+- tips/phases/08-fetch-list-offsets-leader-epoch.md
+
+## Ledger Rows Touched
+
+- `1`
+
+## Tests Added
+
+- `jansu-storage/tests/fetch.rs::phase08::fetch_returns_without_waiting_when_min_bytes_is_satisfied`
+- `jansu-storage/tests/fetch.rs::phase08::fetch_enforces_partition_max_bytes`
+
+## Verification Commands
+
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase08-fetch-current cargo test -p jansu-storage --test fetch --no-default-features --features dynostore -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase08-fetch-broker-current cargo test -p jansu-broker --test fetch --no-default-features --features libsql,dynostore,slatedb -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase08-contract-current cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `rtk env CARGO_TARGET_DIR=/tmp/jansu-verify-phase08-check-current cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets`
+- `rtk cargo fmt --all --check`
+- `rtk git diff --check`
+
+## Outcomes
+
+- Fetch no longer sleeps for `max_wait_ms` after a response already satisfies `min_bytes`.
+- Fetch byte accounting now uses each poll attempt's response bytes, rather than accumulating bytes across retries.
+- Fetch caps storage reads per partition by `partition_max_bytes` and spends global `max_bytes` only on retained batches.
+- SQLite/libsql broker Fetch was unblocked by removing PostgreSQL-style casts from `producer_select_for_update.sql`, which had broken idempotent produce setup for Fetch tests.
+- Compatibility contract and all-target check passed; API 1 remains routed but unadvertised and semantically uncertified.
+
+## Residual Risks
+
+- API 23 remains unadvertised until differential/client proof.
+- Leader epoch truncation/recovery and read-committed transaction integration remain unproven.
+- Fetch incremental sessions, topic ID behavior, broader max-bytes parity, and Java/librdkafka seek proof remain open.
+
+---
+
+## Supplement 2026-05-03 — Next phase routing (MASTER_PLAN alignment)
+
+### Intent
+
+Record agent-facing decision: with Phases **04**, **07**, and **10** complete, **Phase 08** is the default next **feature** execution target (`MASTER_PLAN.md` priority queue #2; `AUDIT-004` in progress; manifest `in-progress`).
+
+### Files Touched
+
+- `MASTER_PLAN.md` — explicit default-next-feature note above priority queue
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md` — routing supplement
+- `phase-logs/index.json` — Phase 08 `residual_risks` refreshed (Fetch min_bytes / partition cap work reflected in canonical history; remaining risks retargeted)
+
+### Verification Commands
+
+- `just compatibility-contract` (after `phase-logs/index.json` edit)
+
+### Outcomes
+
+- Single canonical story for “what to work next” without reopening closed phases except audit-backed fixes.
+
+### Residual Risks
+
+- Unchanged from Phase 08 technical backlog; see `AUDIT-004` and phase tip supplements.
+
+---
+
+## Supplement 2026-05-03 — External differential ListOffsets + Fetch consume evidence
+
+### Intent
+
+Add Kafka 4.2 vs Jansu proof for **unadvertised** read paths: ListOffsets v9 **latest** HWM after Produce, and librdkafka consume-from-beginning (Fetch) payload parity, via Phase 04 `differential_lab` harness (`JANSU_DIFFERENTIAL=1`).
+
+### Files Touched
+
+- `jansu-broker/tests/differential_lab.rs` — `differential_listoffsets_latest_and_fetch_consume_after_produce`, `list_offsets_latest_hwm`, `librdkafka_consume_payloads_from_beginning`; hardened Kafka `create_topics` result handling in produce differential test
+- `docs/compatibility/kafka-4.2-ledger.json` — API keys **1** and **2** `differential_tests` + notes + ListOffsets `failure_modes` → `partial`
+- `AUDIT.md` (`AUDIT-004`)
+- `phase-logs/index.json` (Phase 08 `residual_risks`)
+- `docs/compatibility/differential-lab.md`
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+
+### Tests Added
+
+- `jansu-broker/tests/differential_lab.rs::differential_listoffsets_latest_and_fetch_consume_after_produce`
+
+### Verification Commands
+
+- `cargo check -p jansu-broker --test differential_lab --all-features`
+- `cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture` (skips external tier without `JANSU_DIFFERENTIAL=1`)
+- `just compatibility-contract`
+- `cargo fmt --all --check`
+
+### Outcomes
+
+- Ledger-backed differential proof hook for Fetch (client consume) and ListOffsets (wire v9) against Kafka 4.2 when Docker/external Kafka is available.
+- Does **not** advertise Fetch/ListOffsets or API 23; ApiVersions contract unchanged.
+
+### Residual Risks
+
+- Same as `AUDIT-004`: read_committed/LSO, truncation, incremental Fetch, topic ID, API 23, Java matrix, timestamp seek differentials.
+
+---
+
+## Supplement 2026-05-04 — ListOffsets Earliest in external differential read test
+
+### Intent
+
+Extend `differential_listoffsets_latest_and_fetch_consume_after_produce` so wire **ListOffsets v9** checks both **Latest** (HWM) and **Earliest** (log start) parity vs Kafka 4.2 after identical Produce; refactor wire helper to `list_offsets_partition_offset`.
+
+### Files Touched
+
+- `jansu-broker/tests/differential_lab.rs`
+- `AUDIT.md` (`AUDIT-004`)
+- `docs/compatibility/kafka-4.2-ledger.json` (API key 2 notes)
+- `phase-logs/08-fetch-list-offsets-leader-epoch.md.log`
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+- `phase-logs/attempts/08-fetch-list-offsets-leader-epoch/20260504-listoffsets-earliest-differential-cursor.md`
+
+### Tests Added
+
+- None new by name; extended assertions in `differential_listoffsets_latest_and_fetch_consume_after_produce`.
+
+### Verification Commands
+
+- `cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture`
+- `just compatibility-contract`
+- `cargo fmt --all --check`
+
+### Outcomes
+
+- Artifact `produce-listoffsets-fetch` now records earliest offsets; Kafka and Jansu must both report **0** for Earliest on a fresh single-partition topic after three appends from base offset 0.
+- Removed mistaken `#[ignore]` on `differential_listoffsets_latest_and_fetch_consume_after_produce` so `JANSU_DIFFERENTIAL=1` runs it by default (still no-ops without the env flag).
+- Workspace `unused_results`: manual Tcp `read_exact` calls bind the returned `usize`.
+
+### Residual Risks
+
+- Unchanged from prior supplement; timestamp / read_committed ListOffsets paths still not differentially covered here.
+
+---
+
+## Supplement 2026-05-05 — Produce differential test aligned with ledger
+
+### Intent
+
+Remove stale `#[ignore]` on `differential_produce_round_trip_for_advertised_api` so `JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab` actually executes the Produce librdkafka round-trip already listed in `docs/compatibility/kafka-4.2-ledger.json` (API key 0 `differential_tests`).
+
+### Files Touched
+
+- `jansu-broker/tests/differential_lab.rs`
+- `AUDIT.md` (`AUDIT-004`)
+- `docs/compatibility/differential-lab.md`
+- `MASTER_PLAN.md` (Phase 04 completion bullet: ledger API keys + harness description)
+- `phase-logs/08-fetch-list-offsets-leader-epoch.md.log`
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+- `phase-logs/attempts/08-fetch-list-offsets-leader-epoch/20260505-differential-produce-unignore-cursor.md`
+
+### Tests Added
+
+- None; **un-ignored** existing `differential_produce_round_trip_for_advertised_api`.
+
+### Verification Commands
+
+- `cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture`
+- `just compatibility-contract`
+- `cargo fmt --all --check`
+
+### Outcomes
+
+- External differential suite now runs **four** active tests when `JANSU_DIFFERENTIAL=1` (ApiVersions, Metadata, Produce round-trip, ListOffsets/Fetch read path); `differential_librdkafka_full_lifecycle` remains intentionally ignored.
+
+### Residual Risks
+
+- Same as `AUDIT-004`; Produce differential still requires Docker or `JANSU_DIFF_KAFKA_BOOTSTRAP` like the rest of the tier.
+
+---
+
+## Supplement 2026-05-05 — Fetch ReadCommitted (non-txn) storage proof
+
+### Intent
+
+Add always-on **dynostore** `FetchService` proof that `IsolationLevel::ReadCommitted` returns the same record visibility as `ReadUncommitted` when the log has **no in-flight transactions** (last stable offset equals high watermark), narrowing `AUDIT-004` read_committed gap without claiming transactional semantics.
+
+### Files Touched
+
+- `jansu-storage/tests/fetch.rs` (`phase08::fetch_read_committed_matches_uncommitted_when_no_transactions`; `request(...)` now takes isolation level)
+- `docs/compatibility/kafka-4.2-ledger.json` (API key **1** `unit_tests` + notes)
+- `AUDIT.md` (`AUDIT-004`)
+- `phase-logs/08-fetch-list-offsets-leader-epoch.md.log`
+- `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+- `phase-logs/attempts/08-fetch-list-offsets-leader-epoch/20260505-fetch-read-committed-non-txn-cursor.md`
+
+### Tests Added
+
+- `jansu-storage/tests/fetch.rs::phase08::fetch_read_committed_matches_uncommitted_when_no_transactions`
+
+### Verification Commands
+
+- `cargo test -p jansu-storage --test fetch --no-default-features --features dynostore -- --nocapture`
+- `just compatibility-contract`
+- `cargo fmt --all --check`
+
+### Outcomes
+
+- Regression guard for ReadCommitted fetch path on memory-backed dynostore when LSO tracks HWM.
+
+### Residual Risks
+
+- Transactional produce / abort markers / ListOffsets read_committed still not fully certified; broker matrix test not duplicated for this slice (storage `FetchService` only).

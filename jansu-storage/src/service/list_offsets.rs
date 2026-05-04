@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ops::Deref as _,
-};
+use std::{collections::BTreeMap, ops::Deref as _};
 
 use jansu_sans_io::{
     ApiKey, ErrorCode, IsolationLevel, ListOffset, ListOffsetsRequest, ListOffsetsResponse,
@@ -24,8 +21,10 @@ use jansu_sans_io::{
 use rama::{Context, Service};
 use tracing::{debug, error, instrument};
 
-use super::leader_epoch::{leader_epoch_history, leader_epoch_or_unknown};
-use crate::{Error, Result, Storage, Topition};
+use super::leader_epoch::{
+    current_leader_epoch_error, leader_epoch_history, leader_epoch_or_unknown,
+};
+use crate::{Error, LeaderEpochRecord, Result, Storage, Topition};
 
 /// A [`Service`] using [`Storage`] as [`Context`] taking [`ListOffsetsRequest`] returning [`ListOffsetsResponse`].
 /// ```
@@ -86,12 +85,12 @@ use crate::{Error, Result, Storage, Topition};
 /// assert_eq!(0, partitions[0].partition_index);
 /// assert!(partitions[0].old_style_offsets.is_none());
 /// assert_eq!(
-///     ErrorCode::None,
+///     ErrorCode::UnknownTopicOrPartition,
 ///     ErrorCode::try_from(partitions[0].error_code)?
 /// );
 /// assert_eq!(Some(-1), partitions[0].timestamp);
-/// assert_eq!(Some(0), partitions[0].offset);
-/// assert_eq!(Some(0), partitions[0].leader_epoch);
+/// assert_eq!(Some(-1), partitions[0].offset);
+/// assert_eq!(Some(-1), partitions[0].leader_epoch);
 /// # Ok(())
 /// # }
 /// ```
@@ -100,6 +99,26 @@ pub struct ListOffsetsService;
 
 impl ApiKey for ListOffsetsService {
     const KEY: i16 = ListOffsetsRequest::KEY;
+}
+
+/// A partition that passed validation and needs a storage lookup.
+#[derive(Debug)]
+struct PendingListOffset {
+    topic_slot: usize,
+    partition_slot: usize,
+    topition: Topition,
+    request: ListOffset,
+}
+
+/// Build a per-partition error response with Kafka-compatible defaults.
+fn partition_error(partition_index: i32, error_code: ErrorCode) -> ListOffsetsPartitionResponse {
+    ListOffsetsPartitionResponse::default()
+        .partition_index(partition_index)
+        .error_code(error_code.into())
+        .old_style_offsets(None)
+        .timestamp(Some(-1))
+        .offset(Some(-1))
+        .leader_epoch(Some(-1))
 }
 
 impl<G> Service<G, ListOffsetsRequest> for ListOffsetsService
@@ -123,85 +142,152 @@ where
                 IsolationLevel::try_from(isolation_level)
             })?;
 
-        let topics = if let Some(topics) = req.topics {
-            let mut offsets = vec![];
+        let topics = if let Some(request_topics) = req.topics {
+            // Phase 1: Walk the request in order, validate each partition,
+            // and build the response skeleton preserving request topology.
+            let mut response_topics: Vec<(
+                String,
+                Vec<(i32, Option<ListOffsetsPartitionResponse>)>,
+            )> = Vec::with_capacity(request_topics.len());
 
-            for topic in topics {
-                if let Some(ref partitions) = topic.partitions {
-                    for partition in partitions {
-                        let tp = Topition::new(topic.name.clone(), partition.partition_index);
-                        let offset = ListOffset::try_from(partition.timestamp)?;
+            let mut pending = Vec::new();
+            let mut histories: BTreeMap<Topition, Vec<LeaderEpochRecord>> = BTreeMap::new();
 
-                        offsets.push((tp, offset));
+            for request_topic in request_topics {
+                let topic_slot = response_topics.len();
+                let topic_name = request_topic.name;
+                let request_partitions = request_topic.partitions.unwrap_or_default();
+
+                let mut partition_slots: Vec<_> = request_partitions
+                    .iter()
+                    .map(|partition| (partition.partition_index, None))
+                    .collect();
+
+                for (partition_slot, partition) in request_partitions.iter().enumerate() {
+                    let topition = Topition::new(topic_name.clone(), partition.partition_index);
+
+                    // Check partition existence via leader_epoch_history.
+                    // Unknown partitions get an immediate error response.
+                    let history = match leader_epoch_history(&ctx, &topition).await {
+                        Ok(history) => history,
+                        Err(Error::Api(ErrorCode::UnknownTopicOrPartition)) => {
+                            partition_slots[partition_slot].1 = Some(partition_error(
+                                partition.partition_index,
+                                ErrorCode::UnknownTopicOrPartition,
+                            ));
+                            continue;
+                        }
+                        Err(err) => return Err(err),
+                    };
+
+                    // Validate current_leader_epoch fencing (Kafka semantics).
+                    if let Some(error_code) =
+                        current_leader_epoch_error(partition.current_leader_epoch, &history)
+                    {
+                        partition_slots[partition_slot].1 =
+                            Some(partition_error(partition.partition_index, error_code));
+                        continue;
                     }
+
+                    let request = ListOffset::try_from(partition.timestamp)?;
+
+                    histories.insert(topition.clone(), history);
+                    pending.push(PendingListOffset {
+                        topic_slot,
+                        partition_slot,
+                        topition,
+                        request,
+                    });
                 }
+
+                response_topics.push((topic_name, partition_slots));
             }
 
-            let offsets = ctx
-                .state()
-                .list_offsets(isolation_level, offsets.deref())
-                .await
-                .inspect(|r| debug!(?r, ?offsets))
-                .inspect_err(|err| error!(?err, ?offsets))?;
-
-            let mut leader_epochs = BTreeMap::new();
-            for (topition, offset) in &offsets {
-                if offset.error_code() == ErrorCode::None && !leader_epochs.contains_key(topition) {
-                    let history = leader_epoch_history(&ctx, topition)
-                        .await
-                        .inspect_err(|err| debug!(?err, ?topition))
-                        .unwrap_or_default();
-                    _ = leader_epochs.insert(topition.clone(), history);
-                }
-            }
-
-            let topic_names: BTreeSet<_> = offsets
+            // Phase 2: Call storage only for valid partitions.
+            let storage_requests: Vec<_> = pending
                 .iter()
-                .map(|(topition, _)| topition.topic())
+                .map(|pending| (pending.topition.clone(), pending.request))
                 .collect();
 
-            let topics: Vec<_> = topic_names
-                .iter()
-                .map(|topic_name| {
-                    ListOffsetsTopicResponse::default()
-                        .name((*topic_name).into())
-                        .partitions(Some(
-                            offsets
-                                .iter()
-                                .filter_map(|(topition, offset)| {
-                                    if topition.topic() == *topic_name {
-                                        let epoch = if offset.error_code() == ErrorCode::None {
-                                            leader_epochs
-                                                .get(topition)
-                                                .map(|history| leader_epoch_or_unknown(history))
-                                                .unwrap_or(-1)
-                                        } else {
-                                            -1
-                                        };
-                                        Some(
-                                            ListOffsetsPartitionResponse::default()
-                                                .partition_index(topition.partition())
-                                                .error_code(offset.error_code().into())
-                                                .old_style_offsets(None)
-                                                .timestamp(
-                                                    offset
-                                                        .timestamp()
-                                                        .unwrap_or(Some(-1))
-                                                        .or(Some(-1)),
-                                                )
-                                                .offset(offset.offset().or(Some(-1)))
-                                                .leader_epoch(Some(epoch)),
-                                        )
-                                    } else {
-                                        None
-                                    }
+            let storage_responses = if storage_requests.is_empty() {
+                Vec::new()
+            } else {
+                ctx.state()
+                    .list_offsets(isolation_level, storage_requests.deref())
+                    .await
+                    .inspect(|r| debug!(?r, ?storage_requests))
+                    .inspect_err(|err| error!(?err, ?storage_requests))?
+            };
+
+            // Index storage responses by topition for lookup.
+            let mut by_topition: BTreeMap<Topition, Vec<_>> = BTreeMap::new();
+            for (topition, response) in storage_responses {
+                by_topition.entry(topition).or_default().push(response);
+            }
+
+            // Phase 3: Fill pending partition slots with storage results.
+            for pending in pending {
+                let storage_offset = by_topition.get_mut(&pending.topition).and_then(|v| {
+                    if v.is_empty() {
+                        None
+                    } else {
+                        Some(v.remove(0))
+                    }
+                });
+
+                let response = match storage_offset {
+                    Some(offset) => {
+                        let history = histories
+                            .get(&pending.topition)
+                            .map(Vec::as_slice)
+                            .unwrap_or_default();
+
+                        let epoch = if offset.error_code() == ErrorCode::None {
+                            leader_epoch_or_unknown(history)
+                        } else {
+                            -1
+                        };
+
+                        ListOffsetsPartitionResponse::default()
+                            .partition_index(pending.topition.partition())
+                            .error_code(offset.error_code().into())
+                            .old_style_offsets(None)
+                            .timestamp(offset.timestamp().unwrap_or(Some(-1)).or(Some(-1)))
+                            .offset(offset.offset().or(Some(-1)))
+                            .leader_epoch(Some(epoch))
+                    }
+                    None => partition_error(
+                        pending.topition.partition(),
+                        ErrorCode::UnknownTopicOrPartition,
+                    ),
+                };
+
+                response_topics[pending.topic_slot].1[pending.partition_slot].1 = Some(response);
+            }
+
+            // Phase 4: Assemble final response preserving request order.
+            Some(
+                response_topics
+                    .into_iter()
+                    .map(|(name, partitions)| {
+                        let partitions = partitions
+                            .into_iter()
+                            .map(|(partition_index, response)| {
+                                response.unwrap_or_else(|| {
+                                    partition_error(
+                                        partition_index,
+                                        ErrorCode::UnknownTopicOrPartition,
+                                    )
                                 })
-                                .collect(),
-                        ))
-                })
-                .collect();
+                            })
+                            .collect();
 
-            Some(topics)
+                        ListOffsetsTopicResponse::default()
+                            .name(name)
+                            .partitions(Some(partitions))
+                    })
+                    .collect(),
+            )
         } else {
             None
         };

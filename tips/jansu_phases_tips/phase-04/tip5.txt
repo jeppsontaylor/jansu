@@ -1,0 +1,43 @@
+Done — I produced a complete Phase 04 finish package with concrete code, repo changes, requirements, and validation steps:
+
+[Download the Phase 04 full solution package](sandbox:/mnt/data/PHASE04_FULL_SOLUTION.md)
+
+I confirmed the core blocker: `AUDIT-012` says Phase 04 is blocked until the repo has a stable local Kafka harness and client matrix, while the Phase 04 spec requires a Kafka-vs-Jansu lab that runs shared workloads, captures differences, stores artifacts, and feeds proof into the compatibility ledger.   The master plan also makes proof, logs, AUDIT, manifest, and ledger updates part of “done,” so the solution covers those bookkeeping files too. 
+
+The package finishes Phase 04 without making false compatibility claims. Jansu currently advertises only `ApiVersionsRequest` and `MetadataRequest`, so the lab first proves the advertised surface and captures Produce/Fetch/ListOffsets as preview evidence for Phase 07 and Phase 08 rather than marking them green prematurely.  Apache Kafka 4.2.0 is a valid pinned reference because Apache’s official Docker docs and downloads page list `apache/kafka:4.2.0`. ([Apache Kafka][1])
+
+The solution includes:
+
+* `compose.diff-lab.yaml` with side-by-side `kafka42` and `jansu-diff`.
+* `differential/workloads/*.json` for ApiVersions/Metadata, smoke, and negative cases.
+* `scripts/differential/run.sh` to run identical CLI workloads and emit `target/differential/...` artifacts.
+* `jansu-broker/tests/differential_lab_contract.rs` for normal CI asset validation.
+* `jansu-broker/tests/differential_lab.rs` as ignored Docker-backed integration tests.
+* `just` recipes: `diff-lab-up`, `diff-lab-down`, `diff-lab-api-versions`, `diff-lab-smoke`, `diff-lab-negative`, `diff-lab`.
+* `AUDIT.md`, `MASTER_PLAN.md`, Phase 04 doc, phase log, attempt log, manifest, compatibility contract, and ledger update instructions.
+* Ledger proof hooks for API key `18` / `ApiVersionsRequest` and API key `3` / `MetadataRequest`.
+
+Validation sequence from the package:
+
+```bash
+chmod +x scripts/differential/run.sh
+
+cargo fmt --all --check
+cargo test -p jansu-broker --test differential_lab_contract --all-features -- --nocapture
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+cargo check -p jansu-broker --all-features --all-targets
+
+just diff-lab-up
+just diff-lab-api-versions
+just diff-lab-smoke
+just diff-lab-negative
+cargo test -p jansu-broker --test differential_lab --all-features -- --ignored --nocapture
+just diff-lab-down
+
+git diff --check
+```
+
+I was not able to run the patch in a live clone because the sandbox could not resolve `github.com` for `git clone`, and Docker-backed validation is not available here. The deliverable is therefore a full apply-ready implementation package rather than a tested branch.
+
+[1]: https://kafka.apache.org/42/getting-started/docker/?utm_source=chatgpt.com "Docker | Apache Kafka"
+

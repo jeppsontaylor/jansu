@@ -28,8 +28,8 @@ left join producer_detail pd on pd.producer_epoch = pe.id and pd.topition = tp.i
 
 where
 
-c.name = $1::text
-and t.name = $2::text
-and tp.partition = $3::integer
-and p.id = $4::bigint
-and pe.epoch = $5::smallint;
+c.name = $1
+and t.name = $2
+and tp.partition = $3
+and p.id = $4
+and pe.epoch = $5;

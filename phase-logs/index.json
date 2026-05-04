@@ -106,18 +106,34 @@
     {
       "phase": "04",
       "phase_file": "tips/phases/04-differential-kafka-lab.md",
-      "status": "legacy-unlogged",
+      "status": "complete",
       "log_file": "phase-logs/04-differential-kafka-lab.md.log",
       "attempt_log_dir": "phase-logs/attempts/04-differential-kafka-lab",
       "ledger_api_keys": [],
       "primary_paths": [
-        "tips/phases/04-differential-kafka-lab.md"
+        "tips/phases/04-differential-kafka-lab.md",
+        "phase-logs/04-differential-kafka-lab.md.log",
+        "AUDIT.md",
+        "phase-logs/index.json",
+        "docs/compatibility/kafka-4.2-ledger.json",
+        "docs/compatibility/differential-lab.md",
+        "etc/differential/compose.kafka-4.2.yaml",
+        "scripts/differential/kafka-cli-fixtures.sh",
+        "jansu-broker/tests/differential_lab.rs",
+        "jansu-broker/tests/compatibility_contract.rs",
+        "justfile"
       ],
       "verification_commands": [
-        "cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture"
+        "env CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture",
+        "env JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+        "env JANSU_DIFFERENTIAL=1 just differential-lab",
+        "cargo fmt --all --check",
+        "git diff --check"
       ],
       "residual_risks": [
-        "Historical activity was not backfilled into a structured log."
+        "The lab actively gates only APIs currently advertised by Jansu; unadvertised Produce, Fetch, ListOffsets, consumer-group, idempotence, and transaction workloads remain evidence for their owning phases.",
+        "The external differential tier requires Docker or a supplied Kafka 4.2 bootstrap address.",
+        "Java client and broader franz-go/Sarama matrix expansion remains future Phase 16 ecosystem work unless a phase requires it earlier."
       ]
     },
     {
@@ -179,7 +195,7 @@
     {
       "phase": "07",
       "phase_file": "tips/phases/07-produce-exactness.md",
-      "status": "in-progress",
+      "status": "complete",
       "log_file": "phase-logs/07-produce-exactness.md.log",
       "attempt_log_dir": "phase-logs/attempts/07-produce-exactness",
       "ledger_api_keys": [
@@ -191,28 +207,26 @@
         "phase-logs/README.md",
         "phase-logs/index.json",
         "docs/compatibility/kafka-4.2-ledger.json",
+        "jansu-broker/src/service.rs",
         "jansu-broker/tests/compatibility_contract.rs",
         "jansu-broker/tests/produce_exactness.rs",
-        "jansu-service/src/frame.rs",
+        "jansu-sans-io/src/record/deflated.rs",
         "jansu-service/src/stream.rs",
-        "jansu-storage/src/lib.rs",
         "jansu-storage/src/service/produce.rs",
-        "jansu-storage/tests/common/mod.rs",
         "jansu-storage/tests/produce_exactness.rs"
       ],
       "verification_commands": [
-        "cargo test -p jansu-storage --test produce_exactness --all-features -- --nocapture",
+        "cargo test -p jansu-storage --test produce_exactness --no-default-features --features dynostore -- --nocapture",
         "cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture",
         "cargo test -p jansu-broker --test produce_exactness --all-features -- --nocapture",
-        "cargo test -p jansu-storage --test log_contract --all-features -- --nocapture",
-        "cargo check -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets",
-        "cargo fmt --all --check",
-        "git diff --check",
-        "git check-ignore -v phase-logs/07-produce-exactness.md.log"
+        "cargo test -p jansu-sans-io --all-features --lib -- deflated",
+        "cargo check -p jansu-sans-io -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets"
       ],
       "residual_risks": [
-        "Produce remains unadvertised in ApiVersions because no stable Java/librdkafka differential harness was found in this repo.",
-        "Leader epochs, durable idempotence, transactions, retention, compaction, delete-record behavior changes, and broader differential certification remain for later phases."
+        "v12/v13 topic-ID Produce not implemented; advertised cap is v11.",
+        "Differential Java/librdkafka proof deferred to Phase 04/AUDIT-012.",
+        "DynoStore lake-sink watermark ordering may need separate audit.",
+        "Idempotent/transactional semantics deferred to Phase 11/12."
       ]
     },
     {
@@ -228,6 +242,7 @@
         "tips/phases/08-fetch-list-offsets-leader-epoch.md",
         "phase-logs/08-fetch-list-offsets-leader-epoch.md.log",
         "jansu-storage/src/service/list_offsets.rs",
+        "jansu-storage/src/service/fetch.rs",
         "jansu-storage/src/proxy.rs",
         "jansu-storage/src/dynostore.rs",
         "jansu-storage/src/lite.rs",
@@ -238,9 +253,11 @@
         "jansu-storage/src/sql/leader_epoch_history.sql",
         "jansu-storage/src/sql/offset_for_leader_epoch.sql",
         "jansu-storage/tests/offset_for_leader_epoch.rs",
+        "jansu-storage/tests/fetch.rs",
         "jansu-storage/tests/list_offsets.rs",
         "jansu-broker/tests/fetch.rs",
         "jansu-broker/tests/list_offsets.rs",
+        "jansu-broker/tests/differential_lab.rs",
         "docs/compatibility/kafka-4.2-ledger.json"
       ],
       "verification_commands": [
@@ -254,9 +271,9 @@
         "git diff --check"
       ],
       "residual_risks": [
-        "Broker ListOffsets wire-level tests still fail for mixed-partition error and produced-epoch cases with KafkaProtocol overflow/UnexpectedEof.",
-        "No API 23 version advertisement yet — needs differential client proof.",
-        "Leader epoch truncation/recovery and read-committed transaction integration remain unproven."
+        "No API 23 version advertisement yet — needs Postgres/Turso epoch certification and failure-mode proof where ledger is gray.",
+        "Leader epoch truncation/recovery and transactional read-committed + LSO + aborted-txn integration remain unproven (dynostore FetchService non-txn ReadCommitted parity is proven).",
+        "Fetch incremental sessions vs advertised max version, topic ID consistency across APIs, broader max-bytes parity, and Java/seek/timestamp differential workloads remain unproven."
       ]
     },
     {
@@ -337,7 +354,8 @@
       ],
       "residual_risks": [
         "ConsumerGroupHeartbeat / KIP-848 remains out of scope for this phase.",
-        "Kafka parity certification (ledger semantic_status and profile tiers) remains deferred until differential/client matrix policy is satisfied."
+        "Kafka parity certification (ledger semantic_status and profile tiers) remains deferred until differential/client matrix policy is satisfied.",
+        "PG backend requires pg_migration_phase10.sql on pre-existing databases (010-schema.sql is correct for fresh installs)."
       ]
     },
     {

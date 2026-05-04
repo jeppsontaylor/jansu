@@ -3433,18 +3433,17 @@ impl Storage for Delegate {
         let mut responses = vec![];
 
         for (topition, offset_type) in offsets {
-            if c
-                .query_opt(
-                    "topition_select.sql",
-                    (
-                        self.cluster.as_str(),
-                        topition.topic(),
-                        topition.partition(),
-                    ),
-                )
-                .await
-                .inspect_err(|err| error!(?err, cluster = self.cluster, ?topition))?
-                .is_none()
+            if c.query_opt(
+                "topition_select.sql",
+                (
+                    self.cluster.as_str(),
+                    topition.topic(),
+                    topition.partition(),
+                ),
+            )
+            .await
+            .inspect_err(|err| error!(?err, cluster = self.cluster, ?topition))?
+            .is_none()
             {
                 responses.push((
                     topition.clone(),

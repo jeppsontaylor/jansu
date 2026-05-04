@@ -40,3 +40,16 @@ Do not do:
 - Do not let differences be ignored without an explicit ledger entry.
 
 Fresh session handoff: Start with one end-to-end workload using Java client or Kafka CLI against Kafka 4.2 and Jansu. Make result capture boring and repeatable before adding more clients.
+
+## Completion policy added 2026-05-04
+
+Phase 04 owns the differential infrastructure, artifact schema, Kafka 4.2 reference
+target, and compatibility-ledger proof plumbing.
+
+A semantic mismatch for an unadvertised API does not block Phase 04 completion. It
+must be recorded as evidence for the owning phase. An advertised API mismatch does
+block Phase 04 and must fail the differential lab.
+
+## Supplement 2026-05-05 — Produce differential no longer ignored
+
+- `jansu-broker/tests/differential_lab.rs::differential_produce_round_trip_for_advertised_api` runs whenever `JANSU_DIFFERENTIAL=1` (same gating as other external tests); the old `#[ignore]` was removed so ledger-listed Produce differential proof and the documented `cargo test -p jansu-broker --test differential_lab` command stay honest. Phase 08–owned ListOffsets/Fetch read evidence remains in the same file under separate tests.

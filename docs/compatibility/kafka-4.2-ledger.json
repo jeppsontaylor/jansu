@@ -38,17 +38,23 @@
       },
       "codec_status": "present",
       "route_status": "routed",
-      "current_advertised_versions": null,
-      "approved_advertised_versions": null,
-      "semantic_status": "partial",
+      "current_advertised_versions": {
+        "min": 0,
+        "max": 11
+      },
+      "approved_advertised_versions": {
+        "min": 0,
+        "max": 11
+      },
+      "semantic_status": "compatible",
       "phase_owner": "07",
       "profiles": {
-        "jansu-native": "gray",
+        "jansu-native": "green",
         "kafka-parity-postgres": "gray",
         "kafka-parity-sqlite": "gray",
         "kafka-parity-s3-dynostore": "gray",
-        "kafka-parity-slatedb": "gray",
-        "compat-preview": "gray"
+        "kafka-parity-slatedb": "green",
+        "compat-preview": "green"
       },
       "storage": {
         "postgres": "production-parity",
@@ -77,19 +83,30 @@
           "jansu-storage/tests/produce_exactness.rs::record_count_mismatch_is_rejected_without_append",
           "jansu-storage/tests/produce_exactness.rs::invalid_timestamp_is_rejected_without_append",
           "jansu-storage/tests/produce_exactness.rs::partitions_remain_independent",
-          "jansu-storage/tests/produce_exactness.rs::schema_failure_maps_and_keeps_offsets"
+          "jansu-storage/tests/produce_exactness.rs::schema_failure_maps_and_keeps_offsets",
+          "jansu-storage/tests/produce_exactness.rs::oversized_record_is_rejected_without_append",
+          "jansu-storage/tests/produce_exactness.rs::acks_zero_is_valid_and_appends",
+          "jansu-storage/tests/produce_exactness.rs::invalid_magic_is_rejected_without_append"
         ],
         "differential_tests": [
           "jansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs",
-          "jansu-broker/tests/produce_exactness.rs::api_versions_do_not_advertise_produce",
+          "jansu-broker/tests/produce_exactness.rs::api_versions_advertises_produce_after_phase_07",
           "jansu-broker/tests/produce_exactness.rs::produce_acks_zero_suppresses_wire_response",
           "jansu-broker/tests/produce_exactness.rs::produce_acks_leader_and_full_isr_return_wire_response",
-          "jansu-broker/tests/produce_exactness.rs::produce_request_versions_decode_across_supported_versions"
+          "jansu-broker/tests/produce_exactness.rs::produce_request_versions_decode_across_supported_versions",
+          "jansu-broker/tests/produce_exactness.rs::produce_acks_zero_real_storage_appends_but_suppresses_wire",
+          "jansu-broker/tests/differential_lab.rs::differential_produce_round_trip_for_advertised_api"
         ],
-        "client_tests": {},
-        "failure_modes": "untested"
+        "client_tests": {
+          "phase04": {
+            "baseline": "apache/kafka:4.2.0",
+            "command": "JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+            "artifacts": "target/differential/*.json"
+          }
+        },
+        "failure_modes": "partial"
       },
-      "notes": "Phase 07 Produce exactness slice; routed API remains pre-advertisement because the repo still lacks a stable Java/librdkafka differential harness. Broker version-matrix and storage exactness tests are present, but current advertised versions stay null until external client proof lands."
+      "notes": "Phase 07 Produce exactness complete. Advertised v0..=11 with full validation (acks, CRC, magic, timestamps, compression incl. Snappy, batch size limits, per-partition error isolation), wire suppression for acks=0, and version-matrix decode proof. Differential Java/librdkafka proof deferred to Phase 04/AUDIT-012. Idempotent/transactional semantics deferred to Phase 11/12."
     },
     {
       "api_key": 1,
@@ -126,13 +143,25 @@
           "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
           "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
           "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
-          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
+          "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported",
+          "jansu-storage/tests/fetch.rs::phase08::fetch_returns_without_waiting_when_min_bytes_is_satisfied",
+          "jansu-storage/tests/fetch.rs::phase08::fetch_enforces_partition_max_bytes",
+          "jansu-storage/tests/fetch.rs::phase08::fetch_read_committed_matches_uncommitted_when_no_transactions",
+          "jansu-broker/tests/fetch.rs::in_memory::empty_topic",
+          "jansu-broker/tests/fetch.rs::in_memory::simple_non_txn",
+          "jansu-broker/tests/fetch.rs::lite::empty_topic",
+          "jansu-broker/tests/fetch.rs::lite::simple_non_txn",
+          "jansu-broker/tests/fetch.rs::slatedb::empty_topic",
+          "jansu-broker/tests/fetch.rs::slatedb::simple_non_txn",
+          "jansu-broker/tests/fetch.rs::stale_and_future_leader_epochs_are_fenced_exactly"
         ],
-        "differential_tests": [],
+        "differential_tests": [
+          "jansu-broker/tests/differential_lab.rs::differential_listoffsets_latest_and_fetch_consume_after_produce"
+        ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
-      "notes": "Phase 06 storage contract slice; routed API remains semantically uncertified until the protocol-level phase completes."
+      "notes": "Phase 06 storage contract slice plus Phase 08 Fetch hardening. Fetch still has no advertised versions or compatibility claim. Focused proof covers no extra long-poll sleep once min_bytes is satisfied, partition_max_bytes limiting, broker Fetch across dynostore/libsql/slatedb, leader-epoch fencing, dynostore FetchService ReadCommitted vs ReadUncommitted parity when no in-flight transactions (LSO==HWM), and Phase 04 differential librdkafka consume-after-produce (Fetch path) vs Kafka 4.2 when JANSU_DIFFERENTIAL=1. Remaining Phase 08 gaps include transactional read_committed / aborted-txn visibility, incremental sessions, topic ID behavior, broader max-bytes parity, and API 23 advertisement."
     },
     {
       "api_key": 2,
@@ -171,11 +200,13 @@
           "jansu-storage/tests/log_contract.rs::timestamp_lookup_before_first_record_returns_first_offset",
           "jansu-storage/tests/log_contract.rs::null_storage_reports_log_features_unsupported"
         ],
-        "differential_tests": [],
+        "differential_tests": [
+          "jansu-broker/tests/differential_lab.rs::differential_listoffsets_latest_and_fetch_consume_after_produce"
+        ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
-      "notes": "Phase 06 storage contract slice; routed API remains semantically uncertified until the protocol-level phase completes."
+      "notes": "Phase 06 storage contract slice plus Phase 08 evidence: external differential ListOffsets v9 **latest** and **earliest** offsets after produce match Kafka 4.2 (see differential_lab test). Routed API remains uncertified for advertisement until read_committed/LSO, truncation, and broader matrix proof land."
     },
     {
       "api_key": 3,
@@ -217,12 +248,19 @@
           "jansu-service/tests/route.rs::explicit_api_versions_advertisement"
         ],
         "differential_tests": [
-          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
+          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions",
+          "jansu-broker/tests/differential_lab.rs::differential_metadata_for_empty_cluster_matches_advertised_contract"
         ],
-        "client_tests": {},
+        "client_tests": {
+          "phase04": {
+            "baseline": "apache/kafka:4.2.0",
+            "command": "JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+            "artifacts": "target/differential/*.json"
+          }
+        },
         "failure_modes": "untested"
       },
-      "notes": "Approved advertised versions in phase 02."
+      "notes": "Approved advertised versions in phase 02. Phase 04 differential metadata comparison added."
     },
     {
       "api_key": 8,
@@ -284,10 +322,13 @@
           "jansu-broker/tests/cg_dynamic.rs::pg::sync_rejects_protocol_mismatch",
           "jansu-broker/tests/cg_static.rs::pg::join_with_empty_member_id",
           "jansu-broker/tests/cg_static.rs::pg::rejoin_with_empty_member_id",
-          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
+          "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member",
+          "jansu-broker/tests/cg_dynamic.rs::in_memory::cooperative_sticky_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::lite::cooperative_sticky_rebalance",
+          "jansu-broker/tests/cg_dynamic.rs::slatedb::cooperative_sticky_rebalance"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 consumer group offset management. Postgres: `etc/initdb.d/010-schema.sql` includes `leader_epoch_history` and `consumer_offset.expires_at`; `011-offset-retention-patch.sql` upgrades older volumes; integration tests call `ensure_postgres_offset_schema` before connecting."
     },
@@ -348,7 +389,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 consumer group offset fetch. Non-PG backends fully verified."
     },
@@ -409,7 +450,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 coordinator discovery. Non-PG backends fully verified."
     },
@@ -470,7 +511,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 join group with MemberIdRequired, generation fencing, and rebalance. Non-PG backends fully verified."
     },
@@ -531,7 +572,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 heartbeat with IllegalGeneration fencing verified via heartbeat_with_stale_generation_returns_illegal_generation test."
     },
@@ -592,7 +633,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 leave group with per-member unknown-member error verified via leave_unknown_member_returns_per_member_error test."
     },
@@ -653,7 +694,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 sync group with wrong-generation IllegalGeneration fencing verified via sync_with_wrong_generation_returns_illegal_generation test."
     },
@@ -714,7 +755,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 describe groups. Non-PG backends fully verified."
     },
@@ -775,7 +816,7 @@
           "jansu-broker/tests/cg_static.rs::pg::fence_conflicting_static_member"
         ],
         "client_tests": {},
-        "failure_modes": "untested"
+        "failure_modes": "partial"
       },
       "notes": "Phase 10 list groups. Non-PG backends fully verified."
     },
@@ -882,12 +923,19 @@
         ],
         "differential_tests": [
           "jansu-broker/tests/compatibility_contract.rs::broker_registry_matches_ledger_approved_versions",
-          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions"
+          "jansu-broker/tests/compatibility_contract.rs::broker_route_stack_advertises_only_approved_versions",
+          "jansu-broker/tests/differential_lab.rs::differential_api_versions_advertised_subset_of_kafka42"
         ],
-        "client_tests": {},
+        "client_tests": {
+          "phase04": {
+            "baseline": "apache/kafka:4.2.0",
+            "command": "JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+            "artifacts": "target/differential/*.json"
+          }
+        },
         "failure_modes": "untested"
       },
-      "notes": "Approved advertised versions in phase 02."
+      "notes": "Approved advertised versions in phase 02. Phase 04 differential ApiVersions comparison added."
     },
     {
       "api_key": 19,

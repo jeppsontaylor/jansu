@@ -1,0 +1,1155 @@
+I couldn’t run a local checkout because this environment failed DNS resolution for GitHub during `git clone`, so I did **not** execute the tests. I did inspect the repo, `MASTER_PLAN.md`, `AGENTS.md`, `AUDIT.md`, the Phase 08 spec, service code, tests, storage contracts, and Kafka protocol schemas through GitHub/web. The plan below is therefore a complete implementation/validation blueprint, but not a locally verified patch.
+
+## Phase 08 finish target
+
+Phase 08 should be considered complete only when **Fetch**, **ListOffsets**, and **OffsetForLeaderEpoch / API 23** have wire-level, service-level, storage-level, and compatibility-ledger proof. The project’s own docs make Phase 08 an active priority, require test/audit/ledger evidence for “done,” and explicitly say API 23 must not be advertised until semantics are proven. ([GitHub][1])
+
+The current audit already identifies the exact remaining Phase 08 failure shape: ListOffsets mixed-partition and produced-epoch broker wire tests fail with protocol overflow / `UnexpectedEof`; API 23 is routed but unadvertised; truncation/recovery/read-committed leader-epoch proof is still missing. ([GitHub][2])
+
+The finish plan is:
+
+1. Fix **ListOffsets v9 wire correctness** first, because the current failing tests die before meaningful service assertions.
+2. Fix **ListOffsets service semantics** so it preserves request order, duplicate topic blocks, per-partition `current_leader_epoch`, mixed valid/invalid partitions, and produced epoch reporting.
+3. Centralize **leader epoch truth** in one helper used by ListOffsets, Fetch, and OffsetForLeaderEpoch.
+4. Finish **Fetch exactness** for current-leader-epoch fencing, visible end offsets, log start, long-polling, read isolation, and response fields.
+5. Finish **storage epoch contract** across engines, including create, produce epoch transitions, delete, truncate/recovery, and offset-for-leader-epoch lookup.
+6. Keep **API 23 unadvertised** until differential/client proof passes; advertise only the highest Fetch/ListOffsets versions that are actually proven.
+
+---
+
+## Root causes to fix
+
+### 1. ListOffsets service currently loses request metadata
+
+`ListOffsetsService` flattens the request into `(Topition, ListOffset)` pairs, losing the request partition’s `current_leader_epoch`; then it builds response topics from a `BTreeSet` of topic names, which sorts and deduplicates topics instead of preserving the request’s topic block order. It also reconstructs partitions by filtering storage results rather than by walking the original request. ([GitHub][3])
+
+That is not Kafka-compatible for mixed valid/invalid partitions, duplicate topic sections, or epoch fencing. The existing broker test expects two partitions in the response: one valid partition with offset `0` and leader epoch `0`, and one invalid partition with `UnknownTopicOrPartition`, offset `-1`, and leader epoch `-1`. ([GitHub][4])
+
+### 2. ListOffsets v9 wire encoding/decoding must be fixed
+
+Kafka ListOffsets v9 uses flexible request/response encoding: request header v2, compact strings/arrays, per-partition `current_leader_epoch`, and response header v1. The v9 response includes `partition_index`, `error_code`, `timestamp`, `offset`, and `leader_epoch`; it does **not** include old-style offsets. ([Apache Kafka][5])
+
+Kafka compact types encode non-null lengths as `N + 1` and null as `0`, so an `Overflow` while decoding a mandatory compact array/string usually means the decoder is misaligned, often because a flexible tagged-field buffer was missed or emitted in the wrong place. ([Apache Kafka][5])
+
+The existing sans-io serializer already tries to handle flexible compact sequences and skip version-invalid fields, so the concrete bug is likely in generated metadata/tag-buffer placement, response header v1 handling, or decode alignment for nested flexible structs. ([GitHub][6])
+
+### 3. Leader epoch logic is split and under-proven
+
+The storage trait has `LeaderEpochRecord { epoch, start_offset }`, `offset_stage`, `list_offsets`, `offset_for_leader_epoch`, and `leader_epoch_history`, but the default `leader_epoch_history` returns an empty vector, which can hide unsupported backends behind “unknown epoch” behavior. ([GitHub][7])
+
+`OffsetForLeaderEpochService` currently implements most epoch lookup inline. It validates `current_leader_epoch`, returns high watermark for the current epoch, and finds the next epoch boundary for older epochs. That logic should become the single shared implementation used by API 23, Fetch divergence, and ListOffsets epoch reporting/fencing. ([GitHub][8])
+
+---
+
+# Required code changes
+
+## Change 1 — Add one canonical leader-epoch helper
+
+Create or replace `jansu-storage/src/service/leader_epoch.rs` with a helper that all Phase 08 services use.
+
+```rust
+use std::cmp::Ordering;
+
+use jansu_sans_io::ErrorCode;
+use rama::Context;
+
+use crate::{Error, LeaderEpochRecord, Result, Storage, Topition};
+
+pub(crate) const UNKNOWN_EPOCH: i32 = -1;
+pub(crate) const UNKNOWN_OFFSET: i64 = -1;
+
+pub(crate) async fn leader_epoch_history<G>(
+    ctx: &Context<G>,
+    topition: &Topition,
+) -> Result<Vec<LeaderEpochRecord>>
+where
+    G: Storage,
+{
+    let mut history = ctx.state().leader_epoch_history(topition).await?;
+
+    history.sort_unstable_by_key(|record| (record.epoch, record.start_offset));
+    history.dedup_by_key(|record| record.epoch);
+
+    Ok(history)
+}
+
+pub(crate) fn current_leader_epoch(
+    history: &[LeaderEpochRecord],
+) -> Option<LeaderEpochRecord> {
+    history.last().copied()
+}
+
+pub(crate) fn leader_epoch_or_unknown(history: &[LeaderEpochRecord]) -> i32 {
+    current_leader_epoch(history)
+        .map(|record| record.epoch)
+        .unwrap_or(UNKNOWN_EPOCH)
+}
+
+pub(crate) fn validate_current_leader_epoch(
+    history: &[LeaderEpochRecord],
+    requested: Option<i32>,
+) -> ErrorCode {
+    let Some(requested) = requested else {
+        return ErrorCode::None;
+    };
+
+    if requested == UNKNOWN_EPOCH {
+        return ErrorCode::None;
+    }
+
+    let Some(current) = current_leader_epoch(history) else {
+        return ErrorCode::UnknownLeaderEpoch;
+    };
+
+    match requested.cmp(&current.epoch) {
+        Ordering::Less => ErrorCode::FencedLeaderEpoch,
+        Ordering::Equal => ErrorCode::None,
+        Ordering::Greater => ErrorCode::UnknownLeaderEpoch,
+    }
+}
+
+pub(crate) fn epoch_end_offset(
+    history: &[LeaderEpochRecord],
+    requested_epoch: i32,
+    high_watermark: i64,
+) -> (ErrorCode, i32, i64) {
+    let Some(current) = current_leader_epoch(history) else {
+        return (
+            ErrorCode::UnknownLeaderEpoch,
+            UNKNOWN_EPOCH,
+            UNKNOWN_OFFSET,
+        );
+    };
+
+    if requested_epoch > current.epoch {
+        return (
+            ErrorCode::UnknownLeaderEpoch,
+            UNKNOWN_EPOCH,
+            UNKNOWN_OFFSET,
+        );
+    }
+
+    if requested_epoch == current.epoch {
+        return (ErrorCode::None, current.epoch, high_watermark);
+    }
+
+    let requested_exists = history.iter().any(|record| record.epoch == requested_epoch);
+
+    if !requested_exists {
+        return (
+            ErrorCode::UnknownLeaderEpoch,
+            UNKNOWN_EPOCH,
+            UNKNOWN_OFFSET,
+        );
+    }
+
+    let Some(next) = history
+        .iter()
+        .find(|record| record.epoch > requested_epoch)
+        .copied()
+    else {
+        return (
+            ErrorCode::UnknownLeaderEpoch,
+            UNKNOWN_EPOCH,
+            UNKNOWN_OFFSET,
+        );
+    };
+
+    // This is the end offset for `requested_epoch`: the start offset of the next epoch.
+    (ErrorCode::None, requested_epoch, next.start_offset)
+}
+
+pub(crate) fn error_epoch_and_offset(error_code: ErrorCode) -> (ErrorCode, i32, i64) {
+    (error_code, UNKNOWN_EPOCH, UNKNOWN_OFFSET)
+}
+
+pub(crate) fn is_partition_error(error_code: ErrorCode) -> bool {
+    error_code != ErrorCode::None
+}
+```
+
+Why this matters:
+
+* ListOffsets uses it for `current_leader_epoch` fencing and current epoch reporting.
+* Fetch uses it for `current_leader_epoch`, `last_fetched_epoch`, and diverging epoch fields.
+* OffsetForLeaderEpoch uses it for API 23.
+* Tests can prove this once instead of re-proving three slightly different implementations.
+
+Kafka’s OffsetForLeaderEpoch protocol explicitly defines `current_leader_epoch` fencing: if the supplied current leader epoch is higher than the broker’s, return `UNKNOWN_LEADER_EPOCH`; if lower, return `FENCED_LEADER_EPOCH`. ([Apache Kafka][5])
+
+---
+
+## Change 2 — Rewrite ListOffsetsService around the original request shape
+
+Patch `jansu-storage/src/service/list_offsets.rs`.
+
+The service must **not** use `BTreeSet` response topic reconstruction. It must walk the request topics and partitions in the same order they arrived, preserving duplicate topic blocks and invalid partitions.
+
+Core replacement structure:
+
+```rust
+use std::collections::BTreeMap;
+
+use jansu_sans_io::ErrorCode;
+
+use crate::service::leader_epoch::{
+    leader_epoch_history,
+    leader_epoch_or_unknown,
+    validate_current_leader_epoch,
+    UNKNOWN_EPOCH,
+};
+use crate::{ListOffset, ListOffsetResponse, Topition};
+
+#[derive(Debug, Clone)]
+struct RequestedListOffset {
+    topic_name: String,
+    partition_index: i32,
+    current_leader_epoch: Option<i32>,
+    list_offset: ListOffset,
+}
+
+impl RequestedListOffset {
+    fn topition(&self) -> Topition {
+        Topition::new(self.topic_name.clone(), self.partition_index)
+    }
+}
+
+fn error_list_offset_response(error_code: ErrorCode) -> ListOffsetResponse {
+    ListOffsetResponse::default()
+        .with_error_code(error_code)
+        .with_timestamp(Some(-1))
+        .with_offset(Some(-1))
+}
+```
+
+Then make `serve` do this:
+
+```rust
+async fn serve<G>(
+    &self,
+    ctx: Context<G>,
+    req: ListOffsetsRequest,
+) -> Result<ListOffsetsResponse>
+where
+    G: Storage,
+{
+    let isolation_level = match req.isolation_level {
+        Some(0) | None => IsolationLevel::ReadUncommitted,
+        Some(1) => IsolationLevel::ReadCommitted,
+        Some(other) => {
+            return Err(Error::Api(ErrorCode::from(other)));
+        }
+    };
+
+    let request_topics = req.topics.unwrap_or_default();
+
+    let mut requested = Vec::new();
+
+    for topic in &request_topics {
+        for partition in topic.partitions.as_deref().unwrap_or(&[]) {
+            requested.push(RequestedListOffset {
+                topic_name: topic.name.clone(),
+                partition_index: partition.partition_index,
+                current_leader_epoch: partition.current_leader_epoch,
+                list_offset: ListOffset::try_from(partition.timestamp)?,
+            });
+        }
+    }
+
+    let storage_request: Vec<(Topition, ListOffset)> = requested
+        .iter()
+        .map(|partition| (partition.topition(), partition.list_offset))
+        .collect();
+
+    let storage_results = ctx
+        .state()
+        .list_offsets(isolation_level, &storage_request)
+        .await?;
+
+    let mut offsets_by_partition: BTreeMap<Topition, ListOffsetResponse> =
+        storage_results.into_iter().collect();
+
+    let mut history_by_partition: BTreeMap<Topition, Vec<LeaderEpochRecord>> =
+        BTreeMap::new();
+
+    for partition in &requested {
+        let topition = partition.topition();
+
+        if history_by_partition.contains_key(&topition) {
+            continue;
+        }
+
+        let history = match leader_epoch_history(&ctx, &topition).await {
+            Ok(history) => history,
+            Err(Error::Api(ErrorCode::UnknownTopicOrPartition)) => Vec::new(),
+            Err(error) => return Err(error),
+        };
+
+        history_by_partition.insert(topition, history);
+    }
+
+    let mut response_topics = Vec::with_capacity(request_topics.len());
+
+    for topic in request_topics {
+        let request_partitions = topic.partitions.unwrap_or_default();
+        let mut response_partitions = Vec::with_capacity(request_partitions.len());
+
+        for partition in request_partitions {
+            let topition = Topition::new(topic.name.clone(), partition.partition_index);
+
+            let mut storage_response = offsets_by_partition
+                .remove(&topition)
+                .unwrap_or_else(|| error_list_offset_response(ErrorCode::UnknownTopicOrPartition));
+
+            let history = history_by_partition
+                .get(&topition)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+
+            let mut error_code = storage_response.error_code();
+
+            if error_code == ErrorCode::None {
+                let epoch_error =
+                    validate_current_leader_epoch(history, partition.current_leader_epoch);
+
+                if epoch_error != ErrorCode::None {
+                    error_code = epoch_error;
+                    storage_response =
+                        error_list_offset_response(epoch_error);
+                }
+            }
+
+            let successful = error_code == ErrorCode::None;
+
+            let timestamp = if successful {
+                storage_response.timestamp().or(Some(-1))
+            } else {
+                Some(-1)
+            };
+
+            let offset = if successful {
+                storage_response.offset().or(Some(-1))
+            } else {
+                Some(-1)
+            };
+
+            let leader_epoch = if successful {
+                leader_epoch_or_unknown(history)
+            } else {
+                UNKNOWN_EPOCH
+            };
+
+            response_partitions.push(
+                ListOffsetsPartitionResponse::default()
+                    .partition_index(partition.partition_index)
+                    .error_code(error_code.into())
+                    .old_style_offsets(None)
+                    .timestamp(timestamp)
+                    .offset(offset)
+                    .leader_epoch(Some(leader_epoch)),
+            );
+        }
+
+        response_topics.push(
+            ListOffsetsTopicResponse::default()
+                .name(topic.name)
+                .partitions(Some(response_partitions)),
+        );
+    }
+
+    Ok(ListOffsetsResponse::default()
+        .throttle_time_ms(Some(0))
+        .topics(Some(response_topics)))
+}
+```
+
+Required behavior after this patch:
+
+* Mixed valid/invalid partitions return one response per requested partition.
+* Invalid partitions return `UnknownTopicOrPartition`, timestamp `-1`, offset `-1`, leader epoch `-1`.
+* Valid partitions return storage offset/timestamp and current leader epoch.
+* `current_leader_epoch = -1` means “unknown / do not fence.”
+* Stale `current_leader_epoch` returns `FencedLeaderEpoch`.
+* Future `current_leader_epoch` returns `UnknownLeaderEpoch`.
+* Duplicate topic blocks stay duplicate.
+* Partition order stays request order.
+* Response topic order stays request order.
+
+This directly addresses the existing mixed-partition broker test and the produced-epoch failure class. ([GitHub][4])
+
+---
+
+## Change 3 — Fix ListOffsets v9 protocol round trip before service assertions
+
+Add a focused sans-io test file, for example:
+
+`jansu-sans-io/tests/list_offsets_v9_wire.rs`
+
+The exact constructors may need small adaptation to the generated API, but the test intent should be this:
+
+```rust
+use bytes::BytesMut;
+use jansu_sans_io::{
+    Body, Frame, Header,
+    ListOffsetsPartitionResponse,
+    ListOffsetsResponse,
+    ListOffsetsTopicResponse,
+    RequestHeader,
+    ResponseHeader,
+    ErrorCode,
+};
+
+#[test]
+fn list_offsets_v9_response_roundtrips_mixed_partitions() {
+    let response = ListOffsetsResponse::default()
+        .throttle_time_ms(Some(0))
+        .topics(Some(vec![
+            ListOffsetsTopicResponse::default()
+                .name("phase08".to_owned())
+                .partitions(Some(vec![
+                    ListOffsetsPartitionResponse::default()
+                        .partition_index(0)
+                        .error_code(ErrorCode::None.into())
+                        .old_style_offsets(None)
+                        .timestamp(Some(-1))
+                        .offset(Some(0))
+                        .leader_epoch(Some(0)),
+                    ListOffsetsPartitionResponse::default()
+                        .partition_index(5)
+                        .error_code(ErrorCode::UnknownTopicOrPartition.into())
+                        .old_style_offsets(None)
+                        .timestamp(Some(-1))
+                        .offset(Some(-1))
+                        .leader_epoch(Some(-1)),
+                ])),
+        ]));
+
+    let header = ResponseHeader::default().correlation_id(42);
+
+    let encoded = Frame::response(
+        Header::Response(header),
+        Body::ListOffsetsResponse(response.clone()),
+        ListOffsetsResponse::KEY,
+        9,
+    )
+    .expect("encode list offsets v9 response");
+
+    let decoded = Frame::try_from_bytes(
+        BytesMut::from(&encoded[..]),
+        ListOffsetsResponse::KEY,
+        9,
+    )
+    .expect("decode list offsets v9 response");
+
+    assert_eq!(decoded.body(), &Body::ListOffsetsResponse(response));
+}
+```
+
+Then add an equivalent request test:
+
+```rust
+#[test]
+fn list_offsets_v9_request_roundtrips_current_leader_epoch() {
+    // Request must prove:
+    // - request header v2
+    // - compact topic names / arrays
+    // - partition current_leader_epoch is preserved
+    // - timestamp survives
+    // - no Overflow or UnexpectedEof
+}
+```
+
+If this test fails with `Overflow`, patch the protocol layer in this order:
+
+1. Confirm ListOffsets request/response v9 metadata uses flexible versions.
+2. Confirm response header version for ListOffsets v9 is header v1, including the response-header tagged-field buffer.
+3. Confirm every flexible nested struct emits and consumes its tagged-field buffer exactly once.
+4. Confirm version-invalid fields such as `old_style_offsets` are skipped for v9.
+5. Confirm decoder asserts exact frame consumption so silent trailing bytes cannot hide a tag-buffer bug.
+
+Do **not** patch around this by changing broker tests. The Kafka schema requires compact arrays/strings for ListOffsets v9 and response header v1. ([Apache Kafka][5])
+
+---
+
+## Change 4 — Rewrite OffsetForLeaderEpochService to use the canonical helper
+
+Patch `jansu-storage/src/service/offset_for_leader_epoch.rs`.
+
+Replace the inline epoch math with calls to `validate_current_leader_epoch` and `epoch_end_offset`.
+
+Core partition logic:
+
+```rust
+use crate::service::leader_epoch::{
+    epoch_end_offset,
+    error_epoch_and_offset,
+    leader_epoch_history,
+    validate_current_leader_epoch,
+};
+
+async fn offset_for_partition<G>(
+    ctx: &Context<G>,
+    topic_name: &str,
+    partition: &OffsetForLeaderEpochPartition,
+) -> Result<EpochEndOffset>
+where
+    G: Storage,
+{
+    let topition = Topition::new(topic_name.to_owned(), partition.partition);
+
+    let history = match leader_epoch_history(ctx, &topition).await {
+        Ok(history) => history,
+        Err(Error::Api(ErrorCode::UnknownTopicOrPartition)) => {
+            let (error_code, leader_epoch, end_offset) =
+                error_epoch_and_offset(ErrorCode::UnknownTopicOrPartition);
+
+            return Ok(EpochEndOffset::default()
+                .partition(partition.partition)
+                .error_code(error_code.into())
+                .leader_epoch(Some(leader_epoch))
+                .end_offset(end_offset));
+        }
+        Err(error) => return Err(error),
+    };
+
+    let current_epoch_error =
+        validate_current_leader_epoch(&history, partition.current_leader_epoch);
+
+    if current_epoch_error != ErrorCode::None {
+        let (error_code, leader_epoch, end_offset) =
+            error_epoch_and_offset(current_epoch_error);
+
+        return Ok(EpochEndOffset::default()
+            .partition(partition.partition)
+            .error_code(error_code.into())
+            .leader_epoch(Some(leader_epoch))
+            .end_offset(end_offset));
+    }
+
+    let offset_stage = ctx.state().offset_stage(&topition).await?;
+
+    let (error_code, leader_epoch, end_offset) = epoch_end_offset(
+        &history,
+        partition.leader_epoch,
+        offset_stage.high_watermark(),
+    );
+
+    Ok(EpochEndOffset::default()
+        .partition(partition.partition)
+        .error_code(error_code.into())
+        .leader_epoch(Some(leader_epoch))
+        .end_offset(end_offset))
+}
+```
+
+Required tests:
+
+```rust
+#[tokio::test]
+async fn api23_current_epoch_returns_high_watermark() {}
+
+#[tokio::test]
+async fn api23_prior_epoch_returns_next_epoch_start_offset() {}
+
+#[tokio::test]
+async fn api23_stale_current_leader_epoch_is_fenced() {}
+
+#[tokio::test]
+async fn api23_future_current_leader_epoch_is_unknown_leader_epoch() {}
+
+#[tokio::test]
+async fn api23_unknown_target_epoch_is_unknown_leader_epoch() {}
+
+#[tokio::test]
+async fn api23_unknown_partition_is_partition_error_not_top_level_error() {}
+```
+
+API 23 should remain **unadvertised** until these pass with storage engines and a client/differential harness. The Phase 08 spec explicitly forbids advertising API 23 before historical epoch semantics are proven. ([GitHub][9])
+
+---
+
+## Change 5 — Finish Fetch exactness
+
+`FetchService` already validates `current_leader_epoch` and enriches responses with high watermark, last stable offset, log start offset, and current leader fields. ([GitHub][10])
+
+It still needs these Phase 08 hardening changes.
+
+### 5.1 Validate visible offset bounds before storage fetch
+
+Add this before calling `ctx.state().fetch(...)`:
+
+```rust
+let offset_stage = ctx.state().offset_stage(topition).await?;
+
+let visible_end_offset = match isolation {
+    IsolationLevel::ReadCommitted => offset_stage.last_stable(),
+    IsolationLevel::ReadUncommitted => offset_stage.high_watermark(),
+};
+
+if fetch_offset < offset_stage.log_start() || fetch_offset > visible_end_offset {
+    return Ok(PartitionData::default()
+        .partition_index(partition.partition)
+        .error_code(ErrorCode::OffsetOutOfRange.into())
+        .high_watermark(offset_stage.high_watermark())
+        .last_stable_offset(Some(offset_stage.last_stable()))
+        .log_start_offset(Some(offset_stage.log_start()))
+        .records(None)
+        .current_leader(Some(current_leader))
+        .diverging_epoch(None)
+        .aborted_transactions(None)
+        .preferred_read_replica(Some(-1)));
+}
+```
+
+Required behavior:
+
+* `fetch_offset < log_start_offset` returns partition-level `OffsetOutOfRange`.
+* `fetch_offset > high_watermark` for read-uncommitted returns partition-level `OffsetOutOfRange`.
+* `fetch_offset > last_stable_offset` for read-committed returns partition-level `OffsetOutOfRange` or an empty response matching Kafka differential results.
+* No top-level error for one bad partition.
+
+Fetch response schemas include high watermark, last stable offset, log start offset, diverging epoch, current leader, and snapshot fields in modern versions, so these fields must be populated or intentionally capped by advertised Fetch version. ([Apache Kafka][5])
+
+### 5.2 Implement `last_fetched_epoch` divergence
+
+Fetch requests include leader epoch fields in modern versions. ([Apache Kafka][5])
+
+Add logic:
+
+```rust
+if partition.last_fetched_epoch.unwrap_or(-1) != -1 {
+    let requested_epoch = partition.last_fetched_epoch.unwrap();
+
+    let (epoch_error, diverging_epoch, end_offset) =
+        epoch_end_offset(&history, requested_epoch, offset_stage.high_watermark());
+
+    if epoch_error != ErrorCode::None {
+        return Ok(PartitionData::default()
+            .partition_index(partition.partition)
+            .error_code(epoch_error.into())
+            .high_watermark(offset_stage.high_watermark())
+            .last_stable_offset(Some(offset_stage.last_stable()))
+            .log_start_offset(Some(offset_stage.log_start()))
+            .records(None)
+            .current_leader(Some(current_leader))
+            .diverging_epoch(Some(
+                EpochEndOffset::default()
+                    .partition(partition.partition)
+                    .error_code(epoch_error.into())
+                    .leader_epoch(Some(diverging_epoch))
+                    .end_offset(end_offset),
+            ))
+            .aborted_transactions(None)
+            .preferred_read_replica(Some(-1)));
+    }
+}
+```
+
+Then test:
+
+```rust
+#[tokio::test]
+async fn fetch_with_diverged_last_fetched_epoch_returns_diverging_epoch() {}
+
+#[tokio::test]
+async fn fetch_with_stale_current_leader_epoch_returns_fenced_leader_epoch() {}
+
+#[tokio::test]
+async fn fetch_with_future_current_leader_epoch_returns_unknown_leader_epoch() {}
+```
+
+### 5.3 Fix long-poll loop
+
+The current fetch loop accumulates bytes across attempts. Long-poll logic should evaluate the latest response and return immediately when `min_bytes == 0`.
+
+Use:
+
+```rust
+let deadline = Instant::now() + Duration::from_millis(req.max_wait_ms.unwrap_or(0) as u64);
+let min_bytes = req.min_bytes.unwrap_or(1).max(0) as usize;
+
+loop {
+    let responses = fetch_all_partitions_once(&ctx, &req, isolation).await?;
+    let response_bytes = responses.byte_size();
+
+    if min_bytes == 0 || response_bytes >= min_bytes || Instant::now() >= deadline {
+        return Ok(FetchResponse::default()
+            .throttle_time_ms(Some(0))
+            .error_code(Some(ErrorCode::None.into()))
+            .session_id(Some(0))
+            .responses(Some(responses))
+            .node_endpoints(Some(Vec::new())));
+    }
+
+    let now = Instant::now();
+    if now >= deadline {
+        continue;
+    }
+
+    let sleep_for = (deadline - now).min(Duration::from_millis(50));
+    tokio::time::sleep(sleep_for).await;
+}
+```
+
+Required tests:
+
+```rust
+#[tokio::test(start_paused = true)]
+async fn fetch_min_bytes_zero_returns_without_sleeping() {}
+
+#[tokio::test(start_paused = true)]
+async fn fetch_empty_partition_waits_until_max_wait_when_min_bytes_positive() {}
+
+#[tokio::test(start_paused = true)]
+async fn fetch_returns_early_once_min_bytes_satisfied() {}
+```
+
+### 5.4 Fetch version advertising decision
+
+Phase 08 says either implement incremental sessions or lower Fetch versions. ([GitHub][9])
+
+The safest finish path is:
+
+* Keep Fetch advertised only through the highest version whose behavior is proven.
+* If topic IDs, flexible tagged fields, current leader tagged fields, or incremental sessions are not fully proven, cap Fetch below those requirements.
+* Add a test that `ApiVersions` does **not** advertise unproven Fetch max versions.
+
+---
+
+## Change 6 — Finish storage leader-epoch contract across engines
+
+Storage is the foundation. Every engine participating in Phase 08 must satisfy the same contract.
+
+### Required storage contract
+
+For every engine:
+
+1. Topic creation initializes history to `[(epoch: 0, start_offset: 0)]`.
+2. Producing records at the same leader epoch does not append duplicate history.
+3. Producing a batch at a newer leader epoch appends exactly one boundary at that batch’s base offset.
+4. Producing or recovering a lower epoch after a higher epoch must not silently corrupt history.
+5. Deleting a topic removes its epoch history.
+6. Truncating a log removes epoch records whose `start_offset` is beyond the truncation point.
+7. `leader_epoch_history(topition)` returns sorted, deduplicated history.
+8. `offset_for_leader_epoch` and service-level `epoch_end_offset` agree.
+9. `list_offsets` returns one result per requested partition, including partition-level errors.
+10. Read-committed `ListOffsets` uses last stable offset; read-uncommitted uses high watermark.
+
+Some engines already partially do this. For example, DynoStore has an in-memory leader epoch history map, initializes epoch `0` on topic creation, and records produce-driven epoch boundaries. ([GitHub][11])
+
+### Patch the trait default
+
+In `jansu-storage/src/lib.rs`, the default `leader_epoch_history` should not silently return empty history for engines that do not support it.
+
+Change from “empty history” to an explicit feature error, unless the engine is a test/null engine that intentionally overrides it:
+
+```rust
+async fn leader_epoch_history(
+    &self,
+    topition: &Topition,
+) -> Result<Vec<LeaderEpochRecord>> {
+    Err(Error::FeatureNotEnabled {
+        feature: "leader_epoch_history".to_owned(),
+        message: format!(
+            "storage engine does not implement leader epoch history for {topition:?}"
+        ),
+    })
+}
+```
+
+Then every engine listed in the Phase 08 path list must override it.
+
+### Add a shared conformance test
+
+Create:
+
+`jansu-storage/src/tests/leader_epoch_contract.rs`
+
+Sketch:
+
+```rust
+pub async fn assert_leader_epoch_contract<S>(storage: S)
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let topic = unique_topic("phase08_epoch_contract");
+    let p0 = Topition::new(topic.clone(), 0);
+
+    storage.create_topic(&topic, 1, /* config */).await.unwrap();
+
+    assert_eq!(
+        storage.leader_epoch_history(&p0).await.unwrap(),
+        vec![LeaderEpochRecord {
+            epoch: 0,
+            start_offset: 0,
+        }]
+    );
+
+    produce_with_partition_leader_epoch(&storage, &p0, 0, records(3))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        storage.leader_epoch_history(&p0).await.unwrap(),
+        vec![LeaderEpochRecord {
+            epoch: 0,
+            start_offset: 0,
+        }]
+    );
+
+    produce_with_partition_leader_epoch(&storage, &p0, 1, records(2))
+        .await
+        .unwrap();
+
+    let history = storage.leader_epoch_history(&p0).await.unwrap();
+
+    assert_eq!(
+        history,
+        vec![
+            LeaderEpochRecord {
+                epoch: 0,
+                start_offset: 0,
+            },
+            LeaderEpochRecord {
+                epoch: 1,
+                start_offset: 3,
+            },
+        ]
+    );
+
+    let stage = storage.offset_stage(&p0).await.unwrap();
+    assert_eq!(stage.high_watermark(), 5);
+
+    let latest = storage
+        .list_offsets(
+            IsolationLevel::ReadUncommitted,
+            &[(p0.clone(), ListOffset::Latest)],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(latest[0].1.offset(), Some(5));
+
+    storage.delete_topic(&topic).await.unwrap();
+
+    assert!(
+        matches!(
+            storage.leader_epoch_history(&p0).await,
+            Err(Error::Api(ErrorCode::UnknownTopicOrPartition))
+        )
+    );
+}
+```
+
+Run that against:
+
+* memory / DynoStore
+* SQLite / libSQL
+* PostgreSQL
+* SlateDB
+* S3-backed engine if supported in CI
+* any null/test storage used by broker tests
+
+---
+
+## Change 7 — Add the missing broker tests for Phase 08 acceptance
+
+The existing broker tests already cover mixed partition ListOffsets and request-layer version selection. ([GitHub][4])
+
+Add these tests:
+
+### ListOffsets produced epoch
+
+```rust
+#[tokio::test]
+async fn list_offsets_v9_reports_produced_leader_epoch() {
+    // 1. Create topic partition.
+    // 2. Produce records with partition_leader_epoch = 0.
+    // 3. Produce records with partition_leader_epoch = 1.
+    // 4. Send ListOffsets v9 latest with current_leader_epoch = -1.
+    // 5. Expect:
+    //    error_code = None
+    //    offset = high_watermark
+    //    leader_epoch = 1
+    //    no Overflow / UnexpectedEof
+}
+```
+
+### ListOffsets current leader fencing
+
+```rust
+#[tokio::test]
+async fn list_offsets_v9_stale_current_leader_epoch_is_fenced() {}
+
+#[tokio::test]
+async fn list_offsets_v9_future_current_leader_epoch_is_unknown_leader_epoch() {}
+```
+
+### ListOffsets duplicate topic blocks
+
+```rust
+#[tokio::test]
+async fn list_offsets_v9_preserves_duplicate_topic_blocks_and_order() {
+    // Request:
+    // topic A partition 0
+    // topic B partition 0
+    // topic A partition 1
+    //
+    // Response must use the same three topic blocks.
+}
+```
+
+### OffsetForLeaderEpoch broker wire
+
+```rust
+#[tokio::test]
+async fn offset_for_leader_epoch_v4_wire_current_epoch() {}
+
+#[tokio::test]
+async fn offset_for_leader_epoch_v4_wire_prior_epoch_boundary() {}
+
+#[tokio::test]
+async fn offset_for_leader_epoch_v4_wire_fencing() {}
+```
+
+### Fetch epoch and bounds
+
+```rust
+#[tokio::test]
+async fn fetch_current_leader_epoch_stale_is_fenced() {}
+
+#[tokio::test]
+async fn fetch_future_current_leader_epoch_is_unknown() {}
+
+#[tokio::test]
+async fn fetch_before_log_start_is_offset_out_of_range() {}
+
+#[tokio::test]
+async fn fetch_after_visible_end_is_offset_out_of_range_or_kafka_matching_empty() {}
+
+#[tokio::test(start_paused = true)]
+async fn fetch_long_poll_matches_min_bytes_and_max_wait() {}
+```
+
+---
+
+# Protocol-layer patch checklist for `Overflow` / `UnexpectedEof`
+
+Because the failing broker tests report protocol overflow / EOF, Phase 08 is not done until these exact assertions pass:
+
+```bash
+cargo test -p jansu-sans-io list_offsets_v9 -- --nocapture
+cargo test -p jansu-broker list_offsets -- --nocapture
+```
+
+Patch checklist:
+
+1. **Response header version**
+
+   * ListOffsets v9 response must use response header v1.
+   * Header v1 has tagged fields.
+   * Missing the response-header tag buffer will misalign the body.
+
+2. **Nested flexible structs**
+
+   * Every flexible struct must encode/decode its tagged-field buffer exactly once.
+   * Do not rely on outer structs to consume nested tag buffers.
+
+3. **Compact arrays**
+
+   * Non-null compact arrays encode `len + 1`.
+   * Empty non-null array is `1`, not `0`.
+   * `0` means null.
+   * Mandatory arrays must reject `0`, but the error should identify the field path.
+
+4. **Version-invalid fields**
+
+   * `old_style_offsets` must not be serialized in ListOffsets v9.
+   * It is valid for the service object to set it to `None`; the serializer must skip it because the field is invalid for v9.
+
+5. **Frame consumption**
+
+   * Decode must fail if bytes remain after the frame body.
+   * Decode must fail if the frame body is truncated.
+   * The round-trip test must assert exact body equality.
+
+6. **Golden test**
+
+   * Add a golden ListOffsets v9 request/response byte fixture captured from Apache Kafka or produced by a known-good client.
+   * Decode it with Jansu.
+   * Encode the same logical response with Jansu.
+   * Compare semantic fields first, then byte layout where deterministic.
+
+---
+
+# API version advertising rules
+
+Do not make compatibility claims by routing an API. The project docs explicitly say not to advertise API versions without ledger/test proof. ([GitHub][12])
+
+For Phase 08:
+
+* **ListOffsets**
+
+  * May advertise v9 only after sans-io, broker, storage, and differential tests pass.
+  * Existing test expects the request frame service to use latest ListOffsets version `9`; keep this expectation only after wire proof passes. ([GitHub][4])
+
+* **OffsetForLeaderEpoch / API 23**
+
+  * Keep unadvertised until historical epoch, truncation/recovery, storage conformance, and client/differential proof pass.
+  * Once proven, advertise the exact max version tested.
+
+* **Fetch**
+
+  * Advertise only through the highest version that has exact behavior.
+  * If incremental fetch sessions are not implemented, do not advertise versions requiring exact session behavior.
+  * If topic IDs are not implemented exactly, do not advertise Fetch versions that require topic-ID semantics.
+
+---
+
+# Validation commands
+
+Run these before closing Phase 08:
+
+```bash
+cargo fmt --all --check
+cargo check --workspace --all-features
+```
+
+Protocol proof:
+
+```bash
+cargo test -p jansu-sans-io list_offsets_v9 -- --nocapture
+cargo test -p jansu-sans-io fetch_v13 -- --nocapture
+cargo test -p jansu-sans-io offset_for_leader_epoch_v4 -- --nocapture
+```
+
+Broker proof:
+
+```bash
+cargo test -p jansu-broker list_offsets -- --nocapture
+cargo test -p jansu-broker fetch -- --nocapture
+cargo test -p jansu-broker offset_for_leader_epoch -- --nocapture
+```
+
+Storage proof:
+
+```bash
+cargo test -p jansu-storage leader_epoch_contract -- --nocapture
+cargo test -p jansu-storage list_offsets -- --nocapture
+cargo test -p jansu-storage offset_for_leader_epoch -- --nocapture
+cargo test -p jansu-storage fetch -- --nocapture
+```
+
+Workspace proof:
+
+```bash
+cargo test --workspace --all-features -- --nocapture
+```
+
+Differential proof from the reopened Phase 04 lab:
+
+```bash
+# Apache Kafka baseline
+./scripts/compat/start-kafka.sh
+cargo test -p jansu-compat phase08_list_offsets_against_kafka -- --nocapture
+cargo test -p jansu-compat phase08_fetch_against_kafka -- --nocapture
+cargo test -p jansu-compat phase08_offset_for_leader_epoch_against_kafka -- --nocapture
+
+# Jansu target
+./scripts/compat/start-jansu.sh
+cargo test -p jansu-compat phase08_list_offsets_against_jansu -- --nocapture
+cargo test -p jansu-compat phase08_fetch_against_jansu -- --nocapture
+cargo test -p jansu-compat phase08_offset_for_leader_epoch_against_jansu -- --nocapture
+```
+
+The differential matrix must include:
+
+* ListOffsets earliest.
+* ListOffsets latest.
+* ListOffsets timestamp lookup.
+* ListOffsets max timestamp if supported.
+* Mixed valid/invalid partitions.
+* Duplicate topic blocks.
+* `current_leader_epoch = -1`.
+* Stale `current_leader_epoch`.
+* Future `current_leader_epoch`.
+* Produced leader epoch transition from `0` to `1`.
+* Fetch from log start.
+* Fetch from high watermark.
+* Fetch before log start.
+* Fetch after visible end.
+* Fetch read-uncommitted.
+* Fetch read-committed.
+* Fetch long poll with `min_bytes = 0`.
+* Fetch long poll with positive `min_bytes`.
+* OffsetForLeaderEpoch current epoch.
+* OffsetForLeaderEpoch prior epoch.
+* OffsetForLeaderEpoch unknown epoch.
+* OffsetForLeaderEpoch stale/future current leader epoch.
+* Topic deletion and recreation.
+* Truncation/recovery if the engine supports truncation.
+
+---
+
+# Ledger and audit closeout
+
+After tests pass, update:
+
+1. `docs/compatibility/ledger.json`
+
+   * Add ListOffsets v9 proof.
+   * Add Fetch proof only for advertised versions.
+   * Add API 23 proof only if advertised.
+   * Include storage engine coverage.
+   * Include differential Kafka/client proof artifacts.
+
+2. `AUDIT.md`
+
+   * Close the ListOffsets mixed-partition wire failure.
+   * Close the produced-epoch wire failure.
+   * Keep any remaining truncation/recovery/read-committed risks open if not fully proven.
+
+3. `tips/phases/08-fetch-list-offsets-leader-epoch.md`
+
+   * Mark completed acceptance gates.
+   * Note exact advertised API caps.
+
+4. Phase index / phase log
+
+   * Record commands run.
+   * Record commit hashes.
+   * Record failing tests if any remain.
+   * Do not mark Phase 08 complete until the ledger has proof.
+
+---
+
+# Definition of “Phase 08 finished”
+
+Phase 08 is finished when all of these are true:
+
+* `ListOffsetsService` preserves request order, duplicate topic blocks, invalid partitions, and `current_leader_epoch`.
+* ListOffsets v9 wire tests no longer produce `Overflow` or `UnexpectedEof`.
+* Produced leader epoch transitions are reflected in ListOffsets responses.
+* API 23 returns Kafka-equivalent `OffsetForLeaderEpoch` results.
+* Fetch validates current leader epoch, log start, high watermark, LSO, and long polling.
+* Every advertised version has test and ledger proof.
+* API 23 remains unadvertised unless historical epoch, truncation/recovery, and differential proof pass.
+* All storage engines either implement leader epoch history correctly or are excluded from advertised compatibility.
+* Phase 04 differential lab has at least enough coverage to prove Phase 08’s client-visible claims.
+* Phase 07 produce exactness has at least enough leader-epoch batch metadata coverage to support the produced-epoch Phase 08 tests.
+
+The highest-impact first patch is **ListOffsets v9 wire + request-shape-preserving service rewrite**. That directly targets the current active failures and unlocks the rest of Phase 08 validation.
+
+[1]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/MASTER_PLAN.md "raw.githubusercontent.com"
+[2]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/AUDIT.md "raw.githubusercontent.com"
+[3]: https://github.com/jeppsontaylor/jansu/blob/main/jansu-storage/src/service/list_offsets.rs "jansu/jansu-storage/src/service/list_offsets.rs at main · jeppsontaylor/jansu · GitHub"
+[4]: https://github.com/jeppsontaylor/jansu/blob/main/jansu-broker/tests/list_offsets.rs "jansu/jansu-broker/tests/list_offsets.rs at main · jeppsontaylor/jansu · GitHub"
+[5]: https://kafka.apache.org/42/design/protocol "Protocol | Apache Kafka"
+[6]: https://github.com/jeppsontaylor/jansu/blob/main/jansu-sans-io/src/ser.rs "jansu/jansu-sans-io/src/ser.rs at main · jeppsontaylor/jansu · GitHub"
+[7]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/jansu-storage/src/lib.rs "raw.githubusercontent.com"
+[8]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/jansu-storage/src/service/offset_for_leader_epoch.rs "raw.githubusercontent.com"
+[9]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/tips/phases/08-fetch-list-offsets-leader-epoch.md "raw.githubusercontent.com"
+[10]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/jansu-storage/src/service/fetch.rs "raw.githubusercontent.com"
+[11]: https://github.com/jeppsontaylor/jansu/blob/main/jansu-storage/src/dynostore.rs "jansu/jansu-storage/src/dynostore.rs at main · jeppsontaylor/jansu · GitHub"
+[12]: https://raw.githubusercontent.com/jeppsontaylor/jansu/main/AGENTS.md "raw.githubusercontent.com"
+

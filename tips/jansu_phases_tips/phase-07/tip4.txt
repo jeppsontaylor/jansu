@@ -1,0 +1,1209 @@
+I inspected the repo through the GitHub connector. A direct `git clone` from the sandbox failed because DNS resolution for `github.com` was unavailable, so I could not run the test suite locally, but I did read the master plan, audit backlog, Phase 07 spec/logs, current Produce service, broker routing/advertisement, record-batch codec, and existing Produce tests.
+
+## Current Phase 07 state
+
+Phase 07 is **not finished yet**, but it is much closer than “raw routed Produce.” The existing code already has a good pre-advertisement slice:
+
+Produce is routed through the broker, but **not advertised**. `jansu-broker/src/service.rs` currently advertises only `ApiVersions` and `Metadata`, while `jansu-broker/src/service/storage.rs` still routes `ProduceRequest` into `ProduceService`.  
+
+`ProduceService` already validates `acks`, topic/partition existence when batch validation is enabled, batch magic, timestamp ordering, CRC via canonical re-encode, record count, offset deltas, and append-before-validation safety. It maps storage/schema failures into stable partition errors. 
+
+The broker already suppresses the wire response for `acks=0` in both the frame layer and TCP stream layer, while still processing the request internally.  
+
+The repo already has focused Phase 07 storage tests for required acks, unknown topics, invalid partitions, CRC, unsupported compression, supported none/gzip/lz4/zstd, invalid timestamps, partition independence, and schema failure offset safety.  It also has broker tests for non-advertisement, `acks=0` suppression, `acks=1/-1` response behavior, and Produce v0..=11 decode coverage. 
+
+The ledger still marks Produce as routed but **partial**, with both `current_advertised_versions` and `approved_advertised_versions` set to `null`, and `client_tests` empty.  This matches `AUDIT-003`: Produce remains unadvertised until stable client or differential proof is recorded. 
+
+So the actual remaining work is not “make Produce exist.” The remaining work is: **make the existing implementation exact enough to advertise, add the missing codec/negative/failure proof, add Java/librdkafka differential/client proof, then flip the ledger and advertisement.**
+
+---
+
+# Complete Phase 07 finish plan
+
+## 1. Finish the record-batch codec and validation path
+
+Phase 07 explicitly requires gzip, snappy, lz4, and zstd according to Kafka record-batch behavior. The `Compression` enum already includes `Snappy`, and the inflator path has snappy decode support, but the deflation path currently only writes none/gzip/lz4/zstd and returns `UnexpectedType` for anything else.   The `snap` crate is already a dependency, so this is a direct implementation gap rather than a dependency gap. 
+
+### Change: add snappy deflation
+
+**File:** `jansu-sans-io/src/record/deflated.rs`
+
+Add a `Compression::Snappy` branch in `into_record_data`:
+
+```rust
+fn into_record_data(records: &[Record], compression: Compression) -> Result<Bytes> {
+    let sizing = records
+        .iter()
+        .map(|record| record.size_in_bytes())
+        .collect::<Result<Vec<_>>>()?
+        .iter()
+        .sum::<usize>();
+
+    debug!(sizing);
+
+    let uncompressed = || records.encode();
+
+    match compression {
+        Compression::None => records.encode(),
+
+        Compression::Gzip => {
+            let uncompressed = uncompressed()?;
+
+            let mut gz = GzEncoder::new(
+                BytesMut::with_capacity(uncompressed.len()).writer(),
+                flate2::Compression::default(),
+            );
+
+            gz.write_all(&uncompressed)?;
+
+            gz.finish()
+                .map(|w| w.into_inner())
+                .map(Bytes::from)
+                .map_err(Into::into)
+        }
+
+        Compression::Snappy => {
+            let uncompressed = uncompressed()?;
+
+            let mut encoder = snap::raw::Encoder::new();
+            encoder
+                .compress_vec(&uncompressed)
+                .map(Bytes::from)
+                .map_err(Into::into)
+        }
+
+        Compression::Lz4 => {
+            let uncompressed = uncompressed()?;
+
+            let mut lz4 = lz4::EncoderBuilder::new()
+                .build(BytesMut::with_capacity(uncompressed.len()).writer())?;
+
+            lz4.write_all(&uncompressed[..])?;
+
+            let (w, _) = lz4.finish();
+            Ok(Bytes::from(w.into_inner()))
+        }
+
+        Compression::Zstd => {
+            let uncompressed = uncompressed()?;
+
+            let mut zstd = zstd::stream::write::Encoder::new(
+                BytesMut::with_capacity(uncompressed.len()).writer(),
+                0,
+            )?;
+
+            zstd.write_all(&uncompressed[..])?;
+
+            zstd.finish()
+                .map(|w| w.into_inner())
+                .map(Bytes::from)
+                .map_err(Into::into)
+        }
+    }
+}
+```
+
+Then add a round-trip unit test in `jansu-sans-io/src/record/deflated.rs` for snappy:
+
+```rust
+#[test]
+fn encode_decode_snappy() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    let inflated = inflated::Batch::builder()
+        .attributes(BatchAttribute::default().compression(Compression::Snappy).into())
+        .record(Record::builder().value(Some(Bytes::from_static(LOREM))))
+        .build()?;
+
+    let deflated = Batch::try_from(inflated)?;
+    assert_eq!(Compression::Snappy, Compression::try_from(deflated.attributes)?);
+
+    let records: Vec<Record> = deflated.try_into()?;
+    assert_eq!(1, records.len());
+    assert_eq!(Some(Bytes::from_static(LOREM)), records[0].value.clone());
+
+    Ok(())
+}
+```
+
+## 2. Replace canonical re-compression CRC validation with direct CRC validation
+
+The current `ProduceService::validate_batch` inflates the batch and re-deflates it, then compares canonical `batch_length` and `crc`. That catches corruption, but it is too strict for a Kafka-compatible broker because a producer’s compressed bytes can be valid without being byte-identical to Jansu’s recompression output. This especially matters once snappy client fixtures are added.
+
+### Change: expose direct batch length and CRC checks
+
+**File:** `jansu-sans-io/src/record/deflated.rs`
+
+Add methods on `Batch`:
+
+```rust
+impl Batch {
+    pub fn expected_batch_length(&self) -> Result<i32> {
+        i32::try_from(FIXED_BATCH_LENGTH + self.record_data.len()).map_err(Into::into)
+    }
+
+    pub fn computed_crc(&self) -> Result<u32> {
+        CrcData::from(self).crc()
+    }
+
+    pub fn validate_crc(&self) -> Result<()> {
+        let computed = self.computed_crc()?;
+
+        if computed == self.crc {
+            Ok(())
+        } else {
+            error!(stored = self.crc, computed);
+            Err(Error::ApiError(ErrorCode::CorruptMessage))
+        }
+    }
+}
+```
+
+If `jansu_sans_io::Error::ApiError(ErrorCode)` is not currently used in this path, use `Error::Message("corrupt record batch crc".into())` and map that to `CorruptMessage` in `ProduceService`. The key is that CRC validation must be against the original received bytes, not against recompressed bytes.
+
+### Change: use direct validation in ProduceService
+
+**File:** `jansu-storage/src/service/produce.rs`
+
+Replace the canonical re-deflation block in `validate_batch` with direct checks:
+
+```rust
+fn validate_batch(batch: &deflated::Batch) -> Result<()> {
+    let attributes =
+        BatchAttribute::try_from(batch.attributes).map_err(|error| match error {
+            jansu_sans_io::Error::UnknownCompressionType(_) => {
+                Error::Api(ErrorCode::UnsupportedCompressionType)
+            }
+            otherwise => Error::from(otherwise),
+        })?;
+
+    if batch.magic != Self::MAGIC_V2 {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    if batch.batch_length < 0 {
+        return Err(Error::Api(ErrorCode::CorruptMessage));
+    }
+
+    let expected_batch_length = batch.expected_batch_length().map_err(|error| {
+        debug!(?error);
+        Error::Api(ErrorCode::CorruptMessage)
+    })?;
+
+    if batch.batch_length != expected_batch_length {
+        return Err(Error::Api(ErrorCode::CorruptMessage));
+    }
+
+    batch.validate_crc().map_err(|error| {
+        debug!(?error);
+        Error::Api(ErrorCode::CorruptMessage)
+    })?;
+
+    if batch.base_timestamp < 0
+        || batch.max_timestamp < 0
+        || batch.max_timestamp < batch.base_timestamp
+    {
+        return Err(Error::Api(ErrorCode::InvalidTimestamp));
+    }
+
+    if attributes.control {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    if attributes.delete_horizon {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    if attributes.transaction {
+        // Phase 12 owns transactional visibility and EOS. Until then, transactional
+        // Produce must fail truthfully instead of being silently accepted.
+        return Err(Error::Api(ErrorCode::InvalidTxnState));
+    }
+
+    let records: Vec<Record> = batch.try_into().map_err(|error| {
+        debug!(?error);
+        Error::Api(ErrorCode::CorruptMessage)
+    })?;
+
+    Self::validate_records(batch, attributes, &records)
+}
+```
+
+Add a helper:
+
+```rust
+fn validate_records(
+    batch: &deflated::Batch,
+    attributes: BatchAttribute,
+    records: &[Record],
+) -> Result<()> {
+    if records.is_empty() {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    let expected_record_count =
+        u32::try_from(records.len()).map_err(|_| Error::Api(ErrorCode::InvalidRecord))?;
+
+    if batch.record_count != expected_record_count {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    let expected_last_offset_delta =
+        i32::try_from(records.len() - 1).map_err(|_| Error::Api(ErrorCode::InvalidRecord))?;
+
+    if batch.last_offset_delta != expected_last_offset_delta {
+        return Err(Error::Api(ErrorCode::InvalidRecord));
+    }
+
+    for (index, record) in records.iter().enumerate() {
+        let expected_offset_delta =
+            i32::try_from(index).map_err(|_| Error::Api(ErrorCode::InvalidRecord))?;
+
+        if record.offset_delta != expected_offset_delta {
+            return Err(Error::Api(ErrorCode::InvalidRecord));
+        }
+
+        if record.timestamp_delta < 0 {
+            return Err(Error::Api(ErrorCode::InvalidTimestamp));
+        }
+
+        let timestamp = batch
+            .base_timestamp
+            .checked_add(record.timestamp_delta)
+            .ok_or(Error::Api(ErrorCode::InvalidTimestamp))?;
+
+        if timestamp < batch.base_timestamp {
+            return Err(Error::Api(ErrorCode::InvalidTimestamp));
+        }
+
+        if matches!(attributes.timestamp, jansu_sans_io::TimestampType::CreateTime)
+            && timestamp > batch.max_timestamp
+        {
+            return Err(Error::Api(ErrorCode::InvalidTimestamp));
+        }
+
+        let encoded_size = record.size_in_bytes().map_err(|error| {
+            debug!(?error);
+            Error::Api(ErrorCode::CorruptMessage)
+        })?;
+
+        if record.length < 0 {
+            return Err(Error::Api(ErrorCode::CorruptMessage));
+        }
+
+        // record.length excludes the varint length prefix itself.
+        // size_in_bytes includes it, so this check should be implemented using
+        // an exact helper in jansu-sans-io if VarInt prefix width is needed.
+        if usize::try_from(record.length)
+            .map(|record_length| record_length > encoded_size)
+            .unwrap_or(true)
+        {
+            return Err(Error::Api(ErrorCode::CorruptMessage));
+        }
+    }
+
+    Ok(())
+}
+```
+
+That finishes the biggest correctness issue: accept valid compressed Kafka batches even when recompression would not be byte-identical, while still rejecting CRC/batch-length corruption before append.
+
+## 3. Add request, batch, and record size enforcement
+
+Phase 07 requires message sizes, request sizes, and record batch sizes. The stream layer has a frame-size concept, but `ProduceService` itself still needs stable Kafka error mapping for partition-level size failures. 
+
+### Change: add Produce limits
+
+**File:** `jansu-storage/src/service/produce.rs`
+
+Add constants and helpers:
+
+```rust
+impl ProduceService {
+    const DEFAULT_MAX_REQUEST_BYTES: usize = 100 * 1024 * 1024;
+    const DEFAULT_MAX_BATCH_BYTES: usize = 100 * 1024 * 1024;
+    const DEFAULT_MAX_RECORD_BYTES: usize = 1 * 1024 * 1024;
+
+    fn batch_wire_size(batch: &deflated::Batch) -> Result<usize> {
+        let length = usize::try_from(batch.batch_length)
+            .map_err(|_| Error::Api(ErrorCode::CorruptMessage))?;
+
+        length
+            .checked_add(size_of::<i64>())
+            .and_then(|size| size.checked_add(size_of::<i32>()))
+            .ok_or(Error::Api(ErrorCode::CorruptMessage))
+    }
+
+    fn records_wire_size(records: &[Record]) -> Result<usize> {
+        records
+            .iter()
+            .map(|record| {
+                record
+                    .size_in_bytes()
+                    .map_err(|error| {
+                        debug!(?error);
+                        Error::Api(ErrorCode::CorruptMessage)
+                    })
+            })
+            .try_fold(0usize, |acc, size| {
+                acc.checked_add(size?).ok_or(Error::Api(ErrorCode::RecordListTooLarge))
+            })
+    }
+
+    fn validate_batch_size(batch: &deflated::Batch) -> Result<()> {
+        let batch_size = Self::batch_wire_size(batch)?;
+
+        if batch_size > Self::DEFAULT_MAX_BATCH_BYTES {
+            return Err(Error::Api(ErrorCode::RecordListTooLarge));
+        }
+
+        Ok(())
+    }
+
+    fn validate_record_sizes(records: &[Record]) -> Result<()> {
+        for record in records {
+            let size = record.size_in_bytes().map_err(|error| {
+                debug!(?error);
+                Error::Api(ErrorCode::CorruptMessage)
+            })?;
+
+            if size > Self::DEFAULT_MAX_RECORD_BYTES {
+                return Err(Error::Api(ErrorCode::MessageTooLarge));
+            }
+        }
+
+        Ok(())
+    }
+}
+```
+
+Call these in `validate_batch`:
+
+```rust
+Self::validate_batch_size(batch)?;
+
+let records: Vec<Record> = batch.try_into().map_err(|error| {
+    debug!(?error);
+    Error::Api(ErrorCode::CorruptMessage)
+})?;
+
+Self::validate_record_sizes(&records)?;
+Self::validate_records(batch, attributes, &records)
+```
+
+Add a request-level preflight in `serve`:
+
+```rust
+fn validate_request_size(&self, req: &ProduceRequest) -> Option<ErrorCode> {
+    let Some(topics) = req.topic_data.as_deref() else {
+        return None;
+    };
+
+    let mut size = 0usize;
+
+    for topic in topics {
+        if let Some(partitions) = topic.partition_data.as_deref() {
+            for partition in partitions {
+                if let Some(records) = partition.records.as_ref() {
+                    for batch in &records.batches {
+                        match Self::batch_wire_size(batch) {
+                            Ok(batch_size) => {
+                                let Some(next) = size.checked_add(batch_size) else {
+                                    return Some(ErrorCode::RecordListTooLarge);
+                                };
+
+                                size = next;
+                            }
+                            Err(_) => return Some(ErrorCode::CorruptMessage),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if size > Self::DEFAULT_MAX_REQUEST_BYTES {
+        Some(ErrorCode::RecordListTooLarge)
+    } else {
+        None
+    }
+}
+```
+
+Then in `serve`, after required-acks validation:
+
+```rust
+if let Some(error_code) = self.validate_request_size(&req) {
+    return Ok(self.request_error_response(req, error_code));
+}
+```
+
+Add this helper:
+
+```rust
+fn request_error_response(&self, req: ProduceRequest, error_code: ErrorCode) -> ProduceResponse {
+    let responses = req.topic_data.map_or_else(Vec::new, |topics| {
+        topics
+            .into_iter()
+            .map(|topic| self.topic_error(topic, error_code))
+            .collect()
+    });
+
+    ProduceResponse::default()
+        .responses(Some(responses))
+        .throttle_time_ms(Some(0))
+        .node_endpoints(None)
+}
+```
+
+This makes request/batch/record size behavior deterministic and partition-safe.
+
+## 4. Make idempotent and transactional Produce truthful without claiming Phase 11/12
+
+Phase 07 must not claim idempotence or transactions. The phase doc explicitly says not to advertise idempotent or transactional Produce semantics just because `InitProducerId` exists.  Existing `produce.rs` has idempotent-adjacent tests under dynostore, so the safe path is not to rip out producer-state handling; it is to keep it storage-owned and make invalid states fail cleanly.
+
+### Add validation policy
+
+In `ProduceService::validate_batch`:
+
+```rust
+fn validate_producer_state_shape(batch: &deflated::Batch) -> Result<()> {
+    let idempotent_shape = batch.producer_id != -1
+        || batch.producer_epoch != -1
+        || batch.base_sequence != -1;
+
+    if !idempotent_shape {
+        return Ok(());
+    }
+
+    if batch.producer_id < 0 {
+        return Err(Error::Api(ErrorCode::InvalidProducerIdMapping));
+    }
+
+    if batch.producer_epoch < 0 {
+        return Err(Error::Api(ErrorCode::InvalidProducerEpoch));
+    }
+
+    if batch.base_sequence < 0 {
+        return Err(Error::Api(ErrorCode::OutOfOrderSequenceNumber));
+    }
+
+    Ok(())
+}
+```
+
+Call it before append:
+
+```rust
+Self::validate_producer_state_shape(batch)?;
+```
+
+Then leave actual sequence ordering, duplicate suppression, fencing, and producer-id registration checks to storage/Phase 11. Existing storage errors such as `UnknownProducerId`, `DuplicateSequenceNumber`, and `OutOfOrderSequenceNumber` already flow through as partition errors in `ProduceService`. 
+
+## 5. Harden topic/partition leader facade errors
+
+Current prevalidation maps missing topic and invalid partition to `UnknownTopicOrPartition`. That is good, but Phase 07 also calls out leader facade cases. 
+
+Add this after finding the metadata partition:
+
+```rust
+let Some(candidate) = partitions
+    .iter()
+    .find(|candidate| candidate.partition_index == tp.partition())
+else {
+    return self.error(partition.index, ErrorCode::UnknownTopicOrPartition);
+};
+
+if candidate.leader_id == -1 {
+    return self.error(partition.index, ErrorCode::LeaderNotAvailable);
+}
+
+let local_node = match ctx.state().node().await {
+    Ok(node) => node,
+    Err(otherwise) => {
+        warn!(?otherwise);
+        return self.error(partition.index, ErrorCode::UnknownServerError);
+    }
+};
+
+if candidate.leader_id != local_node {
+    return self.error(partition.index, ErrorCode::NotLeaderOrFollower);
+}
+```
+
+If the generated metadata field name is not `leader_id`, use the actual field name from `MetadataResponsePartition`. The behavior needs to be exactly this: unknown topic/partition for absence, leader-not-available for no leader, not-leader-or-follower when the local broker is not the leader.
+
+## 6. Make `acks=-1` semantics explicit for current storage profiles
+
+The existing implementation accepts `acks=-1` and treats it like a successful durable storage append. That is acceptable only if the ledger and tests say exactly what that means for the current single-broker, storage-backed profile.
+
+### Required policy
+
+For Phase 07:
+
+```text
+acks=0   => append attempted; no wire response; errors are not returned to client.
+acks=1   => response after storage append returns.
+acks=-1  => response after storage append returns and the local storage profile certifies durable append.
+```
+
+For now, do **not** claim multi-replica ISR semantics. That belongs to modern cluster metadata / replication work, not Phase 07. The ledger should describe `acks=-1` as storage-durable single-broker parity, not as full Kafka replicated ISR parity.
+
+Add tests:
+
+```rust
+#[tokio::test]
+async fn acks_zero_still_appends_but_suppresses_wire_response() -> Result<(), TestError> {
+    // Storage test: call ProduceService directly with acks=0.
+    // Assert response object is success internally and high watermark increments.
+}
+
+#[tokio::test]
+async fn acks_all_uses_durable_storage_append() -> Result<(), TestError> {
+    // Produce with acks=-1.
+    // Assert high watermark increments only after successful storage append.
+}
+```
+
+Broker-level `acks=0` suppression already exists, but the storage-level append assertion is still important. 
+
+## 7. Add the missing Phase 07 tests
+
+### Add storage tests
+
+**File:** `jansu-storage/tests/produce_exactness.rs`
+
+Add these tests:
+
+```rust
+#[tokio::test]
+async fn snappy_compression_is_accepted_without_append_corruption() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "compression-snappy";
+    let (inner, storage) = exactness_storage(Some((topic, 1)), None).await?;
+    let ctx = Context::with_state(storage.clone());
+    let service = ProduceService;
+
+    let response = service
+        .serve(
+            ctx,
+            produce_request(
+                topic,
+                vec![partition_data(
+                    0,
+                    vec![compressed_record_batch(b"one", Compression::Snappy)?],
+                )],
+                1,
+            ),
+        )
+        .await?;
+
+    assert_partition_response(&response, 0, 0, ErrorCode::None, 0);
+    assert_eq!(1, storage.produce_calls());
+
+    let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(1, stage.high_watermark());
+
+    Ok(())
+}
+```
+
+```rust
+#[tokio::test]
+async fn oversized_record_is_rejected_without_append() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "record-too-large";
+    let (inner, storage) = exactness_storage(Some((topic, 1)), None).await?;
+    let ctx = Context::with_state(storage);
+    let service = ProduceService;
+
+    let value = vec![b'x'; ProduceService::DEFAULT_MAX_RECORD_BYTES + 1];
+    let batch = inflated::Batch::builder()
+        .record(Record::builder().value(Some(Bytes::from(value))))
+        .build()
+        .and_then(deflated::Batch::try_from)?;
+
+    let response = service
+        .serve(ctx, produce_request(topic, vec![partition_data(0, vec![batch])], 1))
+        .await?;
+
+    assert_partition_response(&response, 0, 0, ErrorCode::MessageTooLarge, -1);
+
+    let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(0, stage.high_watermark());
+
+    Ok(())
+}
+```
+
+```rust
+#[tokio::test]
+async fn transactional_batch_is_rejected_until_phase12() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "txn-rejected";
+    let (inner, storage) = exactness_storage(Some((topic, 1)), None).await?;
+    let ctx = Context::with_state(storage);
+    let service = ProduceService;
+
+    let mut batch = single_record_batch(b"one")?;
+    batch.attributes = i16::from(
+        BatchAttribute::default()
+            .transaction(true)
+            .compression(Compression::None),
+    );
+
+    // Recompute CRC after mutating attributes, or construct via inflated builder
+    // with transactional attribute set.
+    let response = service
+        .serve(ctx, produce_request(topic, vec![partition_data(0, vec![batch])], 1))
+        .await?;
+
+    assert_partition_response(&response, 0, 0, ErrorCode::InvalidTxnState, -1);
+
+    let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(0, stage.high_watermark());
+
+    Ok(())
+}
+```
+
+```rust
+#[tokio::test]
+async fn mixed_topics_and_partitions_preserve_offsets_after_partial_errors() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "mixed-offsets";
+    let (inner, storage) = exactness_storage(Some((topic, 2)), None).await?;
+    let service = ProduceService;
+
+    let response = service
+        .serve(
+            Context::with_state(storage.clone()),
+            ProduceRequest::default()
+                .acks(1)
+                .timeout_ms(0)
+                .topic_data(Some(vec![
+                    TopicProduceData::default()
+                        .name(topic.into())
+                        .partition_data(Some(vec![
+                            partition_data(0, vec![single_record_batch(b"p0-a")?]),
+                            partition_data(99, vec![single_record_batch(b"bad")?]),
+                            partition_data(1, vec![single_record_batch(b"p1-a")?]),
+                        ])),
+                ])),
+        )
+        .await?;
+
+    let topics = response.responses.as_deref().unwrap_or_default();
+    let partitions = topics[0].partition_responses.as_deref().unwrap_or_default();
+
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(partitions[0].error_code)?);
+    assert_eq!(ErrorCode::UnknownTopicOrPartition, ErrorCode::try_from(partitions[1].error_code)?);
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(partitions[2].error_code)?);
+
+    assert_eq!(1, inner.offset_stage(&Topition::new(topic, 0)).await?.high_watermark());
+    assert_eq!(1, inner.offset_stage(&Topition::new(topic, 1)).await?.high_watermark());
+
+    Ok(())
+}
+```
+
+Also add:
+
+```text
+control_batch_is_rejected_without_append
+delete_horizon_batch_is_rejected_without_append
+invalid_producer_epoch_is_rejected_without_append
+batch_length_overflow_is_corrupt_without_append
+request_too_large_maps_to_record_list_too_large
+storage_kafka_storage_error_maps_to_kafka_storage_error
+storage_unknown_server_error_maps_to_unknown_server_error
+```
+
+### Add broker tests
+
+**File:** `jansu-broker/tests/produce_exactness.rs`
+
+Add:
+
+```rust
+#[tokio::test]
+async fn produce_invalid_required_acks_returns_wire_error_across_versions() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    for api_version in 0..=11 {
+        let topic = alphanumeric_string(15);
+        let storage = storage_with_topic(&topic).await?;
+        let broker = broker(storage)?;
+
+        let response = broker
+            .serve(
+                Context::default(),
+                produce_request(&topic, 2, b"bad-acks", api_version)?,
+            )
+            .await?;
+
+        assert!(!response.is_empty());
+
+        let response = Frame::response_from_bytes(response, ProduceRequest::KEY, api_version)?;
+        let response = ProduceResponse::try_from(response.body)?;
+        let topics = response.responses.as_deref().unwrap_or_default();
+        let partitions = topics[0].partition_responses.as_deref().unwrap_or_default();
+
+        assert_eq!(
+            ErrorCode::InvalidRequiredAcks,
+            ErrorCode::try_from(partitions[0].error_code)?
+        );
+    }
+
+    Ok(())
+}
+```
+
+```rust
+#[tokio::test]
+async fn produce_snappy_decodes_across_advertisable_versions() -> Result<()> {
+    let _guard = init_tracing()?;
+
+    for api_version in 0..=11 {
+        let topic = alphanumeric_string(15);
+        let storage = storage_with_topic(&topic).await?;
+        let broker = broker(storage)?;
+
+        let response = broker
+            .serve(
+                Context::default(),
+                produce_request_with_compression(
+                    &topic,
+                    Ack::Leader.into(),
+                    b"snappy",
+                    Compression::Snappy,
+                    api_version,
+                )?,
+            )
+            .await?;
+
+        let response = Frame::response_from_bytes(response, ProduceRequest::KEY, api_version)?;
+        let response = ProduceResponse::try_from(response.body)?;
+        let partitions = response.responses.as_deref().unwrap()[0]
+            .partition_responses
+            .as_deref()
+            .unwrap();
+
+        assert_eq!(ErrorCode::None, ErrorCode::try_from(partitions[0].error_code)?);
+    }
+
+    Ok(())
+}
+```
+
+Then update the existing advertisement test. Before client proof, it should still assert Produce is not advertised. After client proof lands and the ledger is updated, replace it with:
+
+```rust
+#[tokio::test]
+async fn api_versions_advertise_produce_after_phase07_proof() -> Result<()> {
+    let _guard = init_tracing()?;
+    let storage = storage().await?;
+    let broker = broker(storage)?;
+
+    let response = api_versions(&broker).await?;
+    let api_keys = response.api_keys.unwrap_or_default();
+
+    let produce = api_keys
+        .iter()
+        .find(|api_version| api_version.api_key == ProduceRequest::KEY)
+        .expect("Produce must be advertised after Phase 07 proof");
+
+    assert_eq!(0, produce.min_version);
+    assert_eq!(11, produce.max_version);
+
+    Ok(())
+}
+```
+
+## 8. Add the differential/client proof harness
+
+This is the **main closure blocker**. The audit says Produce remains unadvertised until stable client or differential proof exists, and Phase 04’s blocked differential lab is exactly why Produce is stuck as partial. 
+
+### Add a Phase 04/07 shared harness
+
+Create:
+
+```text
+jansu-broker/tests/produce_client_differential.rs
+tests/fixtures/produce_client_matrix/java/
+tests/fixtures/produce_client_matrix/librdkafka/
+scripts/produce-differential.sh
+```
+
+The harness must run the same matrix against:
+
+```text
+1. Apache Kafka baseline
+2. Jansu broker
+```
+
+Required matrix:
+
+```text
+clients:
+  - Java KafkaProducer
+  - librdkafka producer
+
+acks:
+  - 0
+  - 1
+  - all
+
+compression.type:
+  - none
+  - gzip
+  - snappy
+  - lz4
+  - zstd
+
+producer modes:
+  - enable.idempotence=false
+  - transactional.id absent
+  - normal non-transactional producer configs only
+
+request versions:
+  - negotiated via ApiVersions
+  - explicit low-version smoke for v0/v1 if client supports it
+
+negative cases:
+  - unknown topic with auto-create disabled
+  - invalid partition
+  - invalid required acks through raw protocol
+  - oversized record
+  - corrupt CRC through raw protocol
+  - invalid timestamp through raw protocol
+```
+
+A minimal Rust integration test can shell out to the fixtures:
+
+```rust
+#[tokio::test]
+#[ignore = "requires local Kafka and client toolchain"]
+async fn java_and_librdkafka_normal_producers_match_kafka() -> Result<()> {
+    let status = std::process::Command::new("scripts/produce-differential.sh")
+        .env("JANSU_STORAGE", "slatedb://memory")
+        .env("KAFKA_BASELINE", "4.2.0")
+        .status()?;
+
+    assert!(status.success());
+
+    Ok(())
+}
+```
+
+The script should emit machine-readable proof:
+
+```text
+target/compat/phase07/produce-java.json
+target/compat/phase07/produce-librdkafka.json
+target/compat/phase07/produce-raw-negative.json
+```
+
+Each file should contain:
+
+```json
+{
+  "phase": "07",
+  "api_key": 0,
+  "client": "java",
+  "baseline": "kafka-4.2.0",
+  "jansu_git_sha": "...",
+  "matrix": [
+    {
+      "acks": "all",
+      "compression": "snappy",
+      "result": "pass",
+      "jansu_error": 0,
+      "kafka_error": 0,
+      "offset_match": true
+    }
+  ]
+}
+```
+
+The compatibility ledger must point to these proof files by test name/path.
+
+## 9. Advertise Produce only after the proof passes
+
+Once the storage tests, broker tests, and client/differential harness pass, update `advertised_versions()`.
+
+**File:** `jansu-broker/src/service.rs`
+
+```rust
+use jansu_sans_io::{ApiKey as _, ApiVersionsRequest, MetadataRequest, ProduceRequest};
+
+pub fn advertised_versions() -> BTreeMap<i16, ApiVersionRange> {
+    BTreeMap::from([
+        (
+            ApiVersionsRequest::KEY,
+            ApiVersionRange {
+                min_version: 0,
+                max_version: 4,
+            },
+        ),
+        (
+            MetadataRequest::KEY,
+            ApiVersionRange {
+                min_version: 12,
+                max_version: 12,
+            },
+        ),
+        (
+            ProduceRequest::KEY,
+            ApiVersionRange {
+                min_version: 0,
+                max_version: 11,
+            },
+        ),
+    ])
+}
+```
+
+Why `0..=11`: the descriptor and current broker matrix already cover Produce v0 through v11, and the existing broker test proves decode/response across that range.   The final cap should remain `0..=11` only if the Java/librdkafka matrix passes across negotiated Produce behavior. If a client proof shows a version-specific gap, cap to the highest proven exact version and document the lower cap in the ledger.
+
+## 10. Update the compatibility ledger
+
+**File:** `docs/compatibility/kafka-4.2-ledger.json`
+
+Change the Produce row from partial/pre-advertisement to proved/advertised.
+
+```json
+{
+  "api_key": 0,
+  "name": "ProduceRequest",
+  "descriptor_versions": {
+    "max": 11,
+    "min": 0
+  },
+  "codec_status": "present",
+  "route_status": "routed",
+  "current_advertised_versions": {
+    "min": 0,
+    "max": 11
+  },
+  "approved_advertised_versions": {
+    "min": 0,
+    "max": 11
+  },
+  "semantic_status": "complete",
+  "phase_owner": "07",
+  "profiles": {
+    "jansu-native": "green",
+    "kafka-parity-postgres": "green",
+    "kafka-parity-sqlite": "yellow",
+    "kafka-parity-s3-dynostore": "yellow",
+    "kafka-parity-slatedb": "green",
+    "compat-preview": "green"
+  },
+  "proof": {
+    "unit_tests": [
+      "jansu-storage/tests/log_contract.rs::produce_assigns_contiguous_offsets",
+      "jansu-storage/tests/log_contract.rs::fetch_reads_written_records",
+      "jansu-storage/tests/produce_exactness.rs::valid_required_acks_are_accepted",
+      "jansu-storage/tests/produce_exactness.rs::invalid_required_acks_is_rejected",
+      "jansu-storage/tests/produce_exactness.rs::unknown_topic_returns_unknown_topic_or_partition",
+      "jansu-storage/tests/produce_exactness.rs::invalid_partition_returns_unknown_topic_or_partition",
+      "jansu-storage/tests/produce_exactness.rs::crc_invalid_is_rejected_without_append",
+      "jansu-storage/tests/produce_exactness.rs::supported_compressions_are_accepted_without_append",
+      "jansu-storage/tests/produce_exactness.rs::snappy_compression_is_accepted_without_append_corruption",
+      "jansu-storage/tests/produce_exactness.rs::oversized_record_is_rejected_without_append",
+      "jansu-storage/tests/produce_exactness.rs::transactional_batch_is_rejected_until_phase12",
+      "jansu-storage/tests/produce_exactness.rs::mixed_topics_and_partitions_preserve_offsets_after_partial_errors",
+      "jansu-storage/tests/produce_exactness.rs::schema_failure_maps_and_keeps_offsets"
+    ],
+    "differential_tests": [
+      "jansu-broker/tests/produce_exactness.rs::produce_acks_zero_suppresses_wire_response",
+      "jansu-broker/tests/produce_exactness.rs::produce_acks_leader_and_full_isr_return_wire_response",
+      "jansu-broker/tests/produce_exactness.rs::produce_request_versions_decode_across_supported_versions",
+      "jansu-broker/tests/produce_exactness.rs::produce_invalid_required_acks_returns_wire_error_across_versions",
+      "jansu-broker/tests/produce_exactness.rs::produce_snappy_decodes_across_advertisable_versions",
+      "jansu-broker/tests/produce_client_differential.rs::java_and_librdkafka_normal_producers_match_kafka"
+    ],
+    "client_tests": {
+      "java": [
+        "target/compat/phase07/produce-java.json"
+      ],
+      "librdkafka": [
+        "target/compat/phase07/produce-librdkafka.json"
+      ],
+      "raw_protocol_negative": [
+        "target/compat/phase07/produce-raw-negative.json"
+      ]
+    },
+    "failure_modes": "covered"
+  },
+  "notes": "Phase 07 Produce exactness complete for normal non-transactional, non-idempotent producer configs. Advertised Produce v0..=11 is backed by storage exactness tests, broker wire tests, and Java/librdkafka differential proof. Idempotent duplicate suppression, fencing, transactions, multi-replica ISR, and EOS remain owned by phases 11, 12, and 15."
+}
+```
+
+Do not mark idempotent or transactional Produce green. The notes must explicitly preserve those as later-phase scope.
+
+## 11. Update audit and phase logs
+
+**File:** `AUDIT.md`
+
+Move `AUDIT-003` from Open to Resolved:
+
+```md
+- `AUDIT-003` status: `resolved`; phase: `07`; area: produce exactness. Produce is now advertised only after storage exactness, broker wire matrix, Java client, librdkafka, and raw negative differential proof were recorded in `docs/compatibility/kafka-4.2-ledger.json`. Idempotent producer, transactions, EOS, and replicated ISR remain out of scope for Phase 07 and are tracked by later phases.
+```
+
+For `AUDIT-012`, do not claim the full Phase 04 lab is resolved unless the entire differential lab is generalized. Instead update it to:
+
+```md
+- `AUDIT-012` status: `in-progress`; phase: `04`; area: differential Kafka lab. Phase 07 Produce now has a stable local client/differential harness and ledger proof. Remaining Phase 04 work is to generalize the harness across the broader API/client matrix.
+```
+
+**File:** `phase-logs/07-produce-exactness.md.log`
+
+Append a new dated entry:
+
+```md
+## Date
+
+2026-05-03
+
+## Intent
+
+Close Phase 07 by moving Produce from routed/unadvertised partial status to advertised normal-producer compatibility with storage, broker, Java, librdkafka, and raw negative proof.
+
+## Files Touched
+
+- docs/compatibility/kafka-4.2-ledger.json
+- AUDIT.md
+- phase-logs/index.json
+- phase-logs/07-produce-exactness.md.log
+- jansu-broker/src/service.rs
+- jansu-broker/tests/produce_exactness.rs
+- jansu-broker/tests/produce_client_differential.rs
+- jansu-sans-io/src/record/deflated.rs
+- jansu-storage/src/service/produce.rs
+- jansu-storage/tests/produce_exactness.rs
+- scripts/produce-differential.sh
+- tests/fixtures/produce_client_matrix/java/...
+- tests/fixtures/produce_client_matrix/librdkafka/...
+
+## Outcomes
+
+- Added snappy deflation and round-trip validation.
+- Replaced Produce CRC validation based on canonical recompression with direct CRC validation.
+- Added request, batch, and record-size enforcement with stable Kafka error mapping.
+- Rejected transactional/control/delete-horizon batches until later transaction phases.
+- Preserved producer-state error pass-through without advertising idempotent semantics.
+- Added storage and broker negative tests for all advertised Produce versions.
+- Added Java and librdkafka normal producer differential proof.
+- Advertised Produce v0..=11 after ledger-backed proof.
+
+## Residual Risks
+
+- Idempotent duplicate suppression and fencing remain Phase 11.
+- Transactions and EOS remain Phase 12.
+- Multi-broker replicated ISR semantics remain Phase 15.
+- Retention, compaction, and delete-record interactions remain Phase 13.
+```
+
+**File:** `phase-logs/index.json`
+
+Change Phase 07:
+
+```json
+{
+  "phase": "07",
+  "status": "complete",
+  ...
+  "residual_risks": [
+    "Idempotent duplicate suppression and fencing remain Phase 11.",
+    "Transactions and EOS remain Phase 12.",
+    "Multi-broker replicated ISR semantics remain Phase 15.",
+    "Retention, compaction, and delete-record interactions remain Phase 13."
+  ]
+}
+```
+
+## 12. Required validation commands
+
+Run with a dedicated target dir:
+
+```bash
+export CARGO_TARGET_DIR=/tmp/jansu-verify-phase07-final
+```
+
+Focused codec and storage tests:
+
+```bash
+cargo test -p jansu-sans-io record::deflated --all-features -- --nocapture
+cargo test -p jansu-storage --test produce_exactness --all-features -- --nocapture
+cargo test -p jansu-storage --test log_contract --all-features -- --nocapture
+```
+
+Broker wire tests:
+
+```bash
+cargo test -p jansu-broker --test produce_exactness --all-features -- --nocapture
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+```
+
+Differential/client tests:
+
+```bash
+scripts/produce-differential.sh
+cargo test -p jansu-broker --test produce_client_differential --all-features -- --ignored --nocapture
+```
+
+Broader checks:
+
+```bash
+cargo check -p jansu-sans-io -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets
+cargo fmt --all --check
+cargo clippy -p jansu-sans-io -p jansu-storage -p jansu-service -p jansu-broker --all-features --all-targets -- -D warnings
+git diff --check
+git check-ignore -v phase-logs/07-produce-exactness.md.log
+```
+
+Compatibility contract:
+
+```bash
+just compatibility-contract
+```
+
+Final broad sweep:
+
+```bash
+just test
+```
+
+---
+
+# Phase 07 is finished only when these are all true
+
+Produce v0..=11 is advertised in `ApiVersions`, and the advertised range matches the ledger.
+
+Java KafkaProducer and librdkafka producers can produce with normal non-transactional configs and no workarounds.
+
+`acks=0` appends but returns no wire response.
+
+`acks=1` returns after append.
+
+`acks=all` returns after the storage-backed durable append for current single-broker profiles, without claiming replicated ISR parity.
+
+gzip, snappy, lz4, zstd, and none all round-trip through Produce and Fetch proof.
+
+Unknown topic, invalid partition, bad acks, corrupt CRC, invalid magic, invalid timestamp, oversized record/request, schema failure, transactional/control batches, and storage failures map to stable partition errors.
+
+No invalid batch mutates storage before validation completes.
+
+Mixed partition success/error cases assign offsets exactly once and do not skip/corrupt offsets.
+
+`AUDIT-003` is resolved, the ledger has client proof, and Phase 07’s log/index entries are updated.
+
+That is the complete closure path for Phase 07. The highest-value code changes are: **snappy deflation, direct CRC validation, size/error hardening, transactional/idempotent truth boundaries, differential/client harness, then Produce advertisement.**
+

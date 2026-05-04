@@ -14,7 +14,7 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use jansu_sans_io::{ApiKey as _, ApiVersionsRequest, MetadataRequest};
+use jansu_sans_io::{ApiKey as _, ApiVersionsRequest, MetadataRequest, ProduceRequest};
 use jansu_service::{
     ApiVersionRange, BytesFrameLayer, BytesFrameService, FrameRouteService, TcpBytesLayer,
     TcpBytesService, TcpContext, TcpContextLayer, TcpContextService,
@@ -49,6 +49,13 @@ pub fn advertised_versions() -> BTreeMap<i16, ApiVersionRange> {
             ApiVersionRange {
                 min_version: 12,
                 max_version: 12,
+            },
+        ),
+        (
+            ProduceRequest::KEY,
+            ApiVersionRange {
+                min_version: 0,
+                max_version: 11,
             },
         ),
     ])

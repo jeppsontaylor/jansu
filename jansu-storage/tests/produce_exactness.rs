@@ -663,6 +663,7 @@ async fn supported_compressions_are_accepted_without_append() -> Result<(), Test
     for (topic, compression) in [
         ("compression-none", Compression::None),
         ("compression-gzip", Compression::Gzip),
+        ("compression-snappy", Compression::Snappy),
         ("compression-lz4", Compression::Lz4),
         ("compression-zstd", Compression::Zstd),
     ] {
@@ -907,6 +908,74 @@ async fn schema_failure_maps_and_keeps_offsets() -> Result<(), TestError> {
 
     let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
     assert_eq!(0, stage.high_watermark());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn oversized_record_is_rejected_without_append() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "record-too-large";
+    let (inner, storage) = exactness_storage(Some((topic, 1)), None).await?;
+    let ctx = Context::with_state(storage.clone());
+    let service = ProduceService;
+
+    // Build a batch with a record larger than Kafka's default message.max.bytes (1_048_588).
+    // The batch overhead + record payload must exceed this limit.
+    let huge = vec![b'x'; 1_048_576];
+    let batch = inflated::Batch::builder()
+        .record(Record::builder().value(Some(Bytes::from(huge))))
+        .build()
+        .and_then(deflated::Batch::try_from)?;
+
+    let response = service
+        .serve(
+            ctx,
+            produce_request(topic, vec![partition_data(0, vec![batch])], 1),
+        )
+        .await?;
+
+    assert_partition_response(&response, 0, 0, ErrorCode::MessageTooLarge, -1);
+    assert_eq!(0, storage.produce_calls());
+
+    let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(0, stage.high_watermark());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn acks_zero_is_valid_and_appends() -> Result<(), TestError> {
+    let _guard = init_tracing()?;
+
+    let topic = "acks-zero-appends";
+    let (inner, storage) = exactness_storage(Some((topic, 1)), None).await?;
+    let ctx = Context::with_state(storage.clone());
+    let service = ProduceService;
+
+    let response = service
+        .serve(
+            ctx,
+            produce_request(
+                topic,
+                vec![partition_data(0, vec![single_record_batch(b"silent")?])],
+                0,
+            ),
+        )
+        .await?;
+
+    // acks=0 at the storage level should still return a normal response
+    // (wire suppression is handled at the broker frame layer, not storage)
+    let topics = response.responses.as_deref().unwrap_or_default();
+    assert_eq!(1, topics.len());
+
+    // The produce call should have been made
+    assert_eq!(1, storage.produce_calls());
+
+    // The offset should have advanced
+    let stage = inner.offset_stage(&Topition::new(topic, 0)).await?;
+    assert_eq!(1, stage.high_watermark());
 
     Ok(())
 }

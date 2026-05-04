@@ -1,0 +1,1234 @@
+I hit one environment limitation: the execution container could not resolve `github.com`, so I could not literally `git clone` or run local tests. I inspected the repository through the GitHub repository tools and web access instead, including `MASTER_PLAN.md`, `AGENTS.md`, `AUDIT.md`, Phase 04, phase-log manifest/logs, the compatibility ledger, broker service routing, protocol stack, existing tests, and compose/justfile surfaces.
+
+## What Phase 04 needs to become “done”
+
+Phase 04 is currently reopened by audit pressure, not because it is the next normal queue item. `AUDIT-012` is still marked `blocked` because the repo lacks a stable local Kafka harness and client matrix. `MASTER_PLAN.md` also defines “done” as more than code: focused tests, broader checks or recorded blockers, attempt log, canonical phase log, manifest, `AUDIT.md`, and compatibility-ledger proof all need to be updated.  
+
+The Phase 04 acceptance gate is precise: CI must be able to compare Jansu behavior against real Kafka for each advertised API, publish results, and feed proof into the compatibility ledger. The Phase 04 document also calls for Kafka 4.2 plus Jansu side-by-side, common workloads, Java/librdkafka first, Kafka CLI fixtures, artifacts, and reusable harnessing for later phases. 
+
+The current advertised API surface is intentionally tiny: the broker advertises only `ApiVersionsRequest` and `MetadataRequest`, while Produce, Fetch, ListOffsets, and many other routes exist but remain unadvertised pending proof. That means Phase 04 can be finished now by proving the advertised surface against Kafka 4.2 and by creating durable infrastructure for future advertised APIs. 
+
+The current `cg_differential.rs` is not a true differential Kafka lab: it starts a Jansu broker and uses rdkafka consumers, but it does not start Kafka or compare Jansu output against a Kafka baseline. That should stay useful as a client smoke seed, but it cannot satisfy Phase 04. 
+
+Apache’s official Kafka 4.2 Docker documentation supports `apache/kafka:4.2.0`, and the 4.2.0 release announcement is dated February 17, 2026, which matches the repo’s Kafka 4.2 compatibility ledger baseline. ([Apache Kafka][1])
+
+---
+
+# Full Phase 04 solution
+
+## 1. Add a real Kafka 4.2 reference target
+
+Create:
+
+```text
+etc/differential/compose.kafka-4.2.yaml
+```
+
+```yaml
+---
+services:
+  kafka42:
+    image: apache/kafka:4.2.0
+    container_name: jansu-differential-kafka42
+    ports:
+      - "${JANSU_DIFF_KAFKA_PORT:-19092}:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:${JANSU_DIFF_KAFKA_PORT:-19092}
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh",
+          "--bootstrap-server",
+          "127.0.0.1:9092"
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+    pull_policy: missing
+```
+
+Why this file matters:
+
+It makes the Kafka version pinned, local, repeatable, and CI-friendly. Phase 04 should not rely on whatever Kafka version happens to be installed on a developer machine.
+
+---
+
+## 2. Add a reusable differential test harness
+
+Create:
+
+```text
+jansu-broker/tests/differential_lab.rs
+```
+
+Core behavior:
+
+```rust
+// Copyright ⓒ 2024-2026 Peter Morgan <peter.james.morgan@gmail.com>
+//
+// Licensed under the Apache License, Version 2.0.
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    io,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+    process::Command,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use jansu_broker::broker::Broker;
+use jansu_sans_io::{
+    ApiKey as _, ApiVersionsRequest, ApiVersionsResponse, Frame, Header, MetadataRequest,
+    MetadataResponse,
+};
+use rand::{prelude::*, rng};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+    time::{Instant, sleep, timeout},
+};
+use url::Url;
+use uuid::Uuid;
+
+type DynError = Box<dyn std::error::Error + Send + Sync>;
+type DynResult<T> = Result<T, DynError>;
+
+const LEDGER_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../docs/compatibility/kafka-4.2-ledger.json"
+);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct VersionRange {
+    min: i16,
+    max: i16,
+}
+
+#[derive(Debug, Deserialize)]
+struct Ledger {
+    apis: Vec<ApiRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiRow {
+    api_key: i16,
+    approved_advertised_versions: Option<VersionRange>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiVersionsArtifact {
+    schema_version: u16,
+    workload: &'static str,
+    kafka_bootstrap: String,
+    jansu_bootstrap: String,
+    kafka_versions: BTreeMap<i16, VersionRange>,
+    jansu_versions: BTreeMap<i16, VersionRange>,
+    ledger_approved_versions: BTreeMap<i16, VersionRange>,
+}
+
+#[derive(Debug, Serialize)]
+struct MetadataSummary {
+    broker_count: usize,
+    topic_count: usize,
+    has_cluster_id: bool,
+    controller_id: Option<i32>,
+    throttle_time_ms: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+struct MetadataArtifact {
+    schema_version: u16,
+    workload: &'static str,
+    kafka_bootstrap: String,
+    jansu_bootstrap: String,
+    kafka: MetadataSummary,
+    jansu: MetadataSummary,
+}
+
+fn external_enabled() -> bool {
+    std::env::var_os("JANSU_DIFFERENTIAL").is_some()
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+fn other_error(message: impl Into<String>) -> DynError {
+    Box::new(io::Error::new(io::ErrorKind::Other, message.into()))
+}
+
+fn artifact_dir() -> PathBuf {
+    std::env::var_os("JANSU_DIFF_ARTIFACT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join("target/differential"))
+}
+
+fn unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn write_artifact<T: Serialize>(name: &str, value: &T) -> DynResult<()> {
+    let dir = artifact_dir();
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{name}-{}.json", unix_ms()));
+    fs::write(path, serde_json::to_vec_pretty(value)?)?;
+    Ok(())
+}
+
+fn approved_versions_from_ledger() -> DynResult<BTreeMap<i16, VersionRange>> {
+    let ledger: Ledger = serde_json::from_slice(&fs::read(LEDGER_PATH)?)?;
+
+    Ok(ledger
+        .apis
+        .into_iter()
+        .filter_map(|row| {
+            row.approved_advertised_versions
+                .map(|range| (row.api_key, range))
+        })
+        .collect())
+}
+
+fn api_version_map(response: &ApiVersionsResponse) -> BTreeMap<i16, VersionRange> {
+    response
+        .api_keys
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|api| {
+            (
+                api.api_key,
+                VersionRange {
+                    min: api.min_version,
+                    max: api.max_version,
+                },
+            )
+        })
+        .collect()
+}
+
+async fn free_port() -> DynResult<u16> {
+    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).await?;
+    Ok(listener.local_addr()?.port())
+}
+
+async fn tcp_round_trip(bootstrap: &str, request: bytes::Bytes) -> DynResult<Vec<u8>> {
+    let mut stream = TcpStream::connect(bootstrap).await?;
+    stream.write_all(&request).await?;
+
+    let mut len = [0_u8; 4];
+    stream.read_exact(&mut len).await?;
+    let size = i32::from_be_bytes(len);
+    if size < 0 {
+        return Err(other_error(format!("negative Kafka frame size: {size}")));
+    }
+
+    let mut response = vec![0_u8; 4 + size as usize];
+    response[..4].copy_from_slice(&len);
+    stream.read_exact(&mut response[4..]).await?;
+    Ok(response)
+}
+
+async fn api_versions(bootstrap: &str) -> DynResult<ApiVersionsResponse> {
+    let request = Frame::request(
+        Header::Request {
+            api_key: ApiVersionsRequest::KEY,
+            api_version: 4,
+            correlation_id: 7,
+            client_id: Some("jansu-phase04-differential".into()),
+        },
+        ApiVersionsRequest::default()
+            .client_software_name(Some("jansu-phase04-differential".into()))
+            .client_software_version(Some(env!("CARGO_PKG_VERSION").into()))
+            .into(),
+    )?;
+
+    let response = tcp_round_trip(bootstrap, request).await?;
+    let response = Frame::response_from_bytes(&response[..], ApiVersionsRequest::KEY, 4)?;
+    Ok(ApiVersionsResponse::try_from(response.body)?)
+}
+
+async fn metadata(bootstrap: &str) -> DynResult<MetadataResponse> {
+    let request = Frame::request(
+        Header::Request {
+            api_key: MetadataRequest::KEY,
+            api_version: 12,
+            correlation_id: 8,
+            client_id: Some("jansu-phase04-differential".into()),
+        },
+        MetadataRequest::default()
+            .topics(Some([].into()))
+            .allow_auto_topic_creation(Some(false))
+            .include_cluster_authorized_operations(Some(false))
+            .include_topic_authorized_operations(Some(false))
+            .into(),
+    )?;
+
+    let response = tcp_round_trip(bootstrap, request).await?;
+    let response = Frame::response_from_bytes(&response[..], MetadataRequest::KEY, 12)?;
+    Ok(MetadataResponse::try_from(response.body)?)
+}
+
+fn summarize_metadata(response: &MetadataResponse) -> MetadataSummary {
+    MetadataSummary {
+        broker_count: response.brokers.as_deref().unwrap_or_default().len(),
+        topic_count: response.topics.as_deref().unwrap_or_default().len(),
+        has_cluster_id: response.cluster_id.is_some(),
+        controller_id: response.controller_id,
+        throttle_time_ms: response.throttle_time_ms,
+    }
+}
+
+struct KafkaGuard {
+    bootstrap: String,
+    compose_started: bool,
+}
+
+impl KafkaGuard {
+    async fn start() -> DynResult<Self> {
+        if let Ok(bootstrap) = std::env::var("JANSU_DIFF_KAFKA_BOOTSTRAP") {
+            wait_for_api_versions(&bootstrap).await?;
+            return Ok(Self {
+                bootstrap,
+                compose_started: false,
+            });
+        }
+
+        let compose_file = "etc/differential/compose.kafka-4.2.yaml";
+        let status = Command::new("docker")
+            .current_dir(repo_root())
+            .args([
+                "compose",
+                "-f",
+                compose_file,
+                "up",
+                "--wait",
+                "--detach",
+                "kafka42",
+            ])
+            .status()?;
+
+        if !status.success() {
+            return Err(other_error(format!(
+                "docker compose failed to start Kafka 4.2: {status}"
+            )));
+        }
+
+        let port = std::env::var("JANSU_DIFF_KAFKA_PORT").unwrap_or_else(|_| "19092".into());
+        let bootstrap = format!("127.0.0.1:{port}");
+        wait_for_api_versions(&bootstrap).await?;
+
+        Ok(Self {
+            bootstrap,
+            compose_started: true,
+        })
+    }
+
+    fn bootstrap(&self) -> &str {
+        &self.bootstrap
+    }
+}
+
+impl Drop for KafkaGuard {
+    fn drop(&mut self) {
+        if self.compose_started {
+            let _ = Command::new("docker")
+                .current_dir(repo_root())
+                .args([
+                    "compose",
+                    "-f",
+                    "etc/differential/compose.kafka-4.2.yaml",
+                    "down",
+                    "--volumes",
+                    "--remove-orphans",
+                ])
+                .status();
+        }
+    }
+}
+
+struct JansuGuard {
+    bootstrap: String,
+    task: JoinHandle<()>,
+}
+
+impl JansuGuard {
+    async fn start() -> DynResult<Self> {
+        let port = free_port().await?;
+        let listener = Url::parse(&format!("tcp://127.0.0.1:{port}"))?;
+
+        let broker = Broker::builder()
+            .node_id(rng().random_range(1..i32::MAX))
+            .cluster_id(format!("jansu-phase04-{}", Uuid::now_v7()))
+            .incarnation_id(Uuid::now_v7())
+            .listener(listener.clone())
+            .advertised_listener(listener)
+            .storage(Url::parse("slatedb://memory")?)
+            .silent(true)
+            .build()
+            .await?;
+
+        let bootstrap = format!("127.0.0.1:{port}");
+        let task = tokio::spawn(async move {
+            if let Err(error) = broker.main(Instant::now()).await {
+                eprintln!("jansu differential broker exited with error: {error:?}");
+            }
+        });
+
+        wait_for_api_versions(&bootstrap).await?;
+
+        Ok(Self { bootstrap, task })
+    }
+
+    fn bootstrap(&self) -> &str {
+        &self.bootstrap
+    }
+}
+
+impl Drop for JansuGuard {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn wait_for_api_versions(bootstrap: &str) -> DynResult<()> {
+    let deadline = Duration::from_secs(30);
+
+    timeout(deadline, async {
+        loop {
+            if api_versions(bootstrap).await.is_ok() {
+                return Ok::<_, DynError>(());
+            }
+            sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .map_err(|_| other_error(format!("timed out waiting for {bootstrap}")))??;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn differential_api_versions_advertised_subset_of_kafka42() -> DynResult<()> {
+    if !external_enabled() {
+        eprintln!("skipping external differential lab; set JANSU_DIFFERENTIAL=1");
+        return Ok(());
+    }
+
+    let kafka = KafkaGuard::start().await?;
+    let jansu = JansuGuard::start().await?;
+
+    let kafka_response = api_versions(kafka.bootstrap()).await?;
+    let jansu_response = api_versions(jansu.bootstrap()).await?;
+
+    let kafka_versions = api_version_map(&kafka_response);
+    let jansu_versions = api_version_map(&jansu_response);
+    let ledger_approved_versions = approved_versions_from_ledger()?;
+
+    assert_eq!(
+        ledger_approved_versions, jansu_versions,
+        "Jansu ApiVersions must exactly match approved advertised ledger versions"
+    );
+
+    for (api_key, jansu_range) in &jansu_versions {
+        let kafka_range = kafka_versions.get(api_key).ok_or_else(|| {
+            other_error(format!(
+                "Kafka 4.2 does not advertise Jansu-approved api_key {api_key}"
+            ))
+        })?;
+
+        assert!(
+            kafka_range.min <= jansu_range.min && kafka_range.max >= jansu_range.max,
+            "Jansu api_key {api_key} range {jansu_range:?} must be a Kafka 4.2 subset {kafka_range:?}"
+        );
+    }
+
+    write_artifact(
+        "api-versions",
+        &ApiVersionsArtifact {
+            schema_version: 1,
+            workload: "api_versions_advertised_subset_of_kafka42",
+            kafka_bootstrap: kafka.bootstrap().into(),
+            jansu_bootstrap: jansu.bootstrap().into(),
+            kafka_versions,
+            jansu_versions,
+            ledger_approved_versions,
+        },
+    )?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn differential_metadata_for_empty_cluster_matches_advertised_contract() -> DynResult<()> {
+    if !external_enabled() {
+        eprintln!("skipping external differential lab; set JANSU_DIFFERENTIAL=1");
+        return Ok(());
+    }
+
+    let kafka = KafkaGuard::start().await?;
+    let jansu = JansuGuard::start().await?;
+
+    let kafka_metadata = metadata(kafka.bootstrap()).await?;
+    let jansu_metadata = metadata(jansu.bootstrap()).await?;
+
+    let kafka_summary = summarize_metadata(&kafka_metadata);
+    let jansu_summary = summarize_metadata(&jansu_metadata);
+
+    assert!(
+        kafka_summary.broker_count >= 1,
+        "Kafka should report at least one broker"
+    );
+    assert!(
+        jansu_summary.broker_count >= 1,
+        "Jansu should report at least one broker"
+    );
+    assert_eq!(
+        0, kafka_summary.topic_count,
+        "empty Kafka reference cluster should report no requested topics"
+    );
+    assert_eq!(
+        0, jansu_summary.topic_count,
+        "empty Jansu reference cluster should report no requested topics"
+    );
+    assert!(
+        kafka_summary.has_cluster_id,
+        "Kafka metadata should include cluster id"
+    );
+    assert!(
+        jansu_summary.has_cluster_id,
+        "Jansu metadata should include cluster id"
+    );
+
+    write_artifact(
+        "metadata-empty-cluster",
+        &MetadataArtifact {
+            schema_version: 1,
+            workload: "metadata_for_empty_cluster_matches_advertised_contract",
+            kafka_bootstrap: kafka.bootstrap().into(),
+            jansu_bootstrap: jansu.bootstrap().into(),
+            kafka: kafka_summary,
+            jansu: jansu_summary,
+        },
+    )?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "manual client matrix smoke; enable after the owning API phase advertises Produce/Fetch/group APIs"]
+async fn differential_librdkafka_smoke_create_produce_consume_commit_offsets() -> DynResult<()> {
+    // This intentionally remains ignored until Produce/Fetch/ListOffsets/group APIs are
+    // promoted by their owning phases. Phase 04 owns the harness, artifact shape, and
+    // execution surface; semantic failures here become Phase 07/08/10 evidence.
+    Ok(())
+}
+```
+
+This is the most important code in Phase 04. It creates two targets, speaks Kafka protocol directly to both, compares Jansu’s advertised surface to the Kafka 4.2 baseline, and writes machine-readable artifacts.
+
+The test deliberately gates external work behind:
+
+```text
+JANSU_DIFFERENTIAL=1
+```
+
+That keeps normal `cargo test` reliable on machines without Docker, while still letting CI or maintainers run the real Kafka lab.
+
+---
+
+## 3. Add Kafka CLI fixture runner
+
+Create:
+
+```text
+scripts/differential/kafka-cli-fixtures.sh
+```
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+BOOTSTRAP="${1:?usage: kafka-cli-fixtures.sh <bootstrap> <target-name> <artifact-dir>}"
+TARGET="${2:?usage: kafka-cli-fixtures.sh <bootstrap> <target-name> <artifact-dir>}"
+ARTIFACT_DIR="${3:-target/differential/cli}"
+
+mkdir -p "${ARTIFACT_DIR}"
+
+timestamp_ms() {
+  python3 - <<'PY'
+import time
+print(int(time.time() * 1000))
+PY
+}
+
+find_kafka_bin() {
+  local tool="$1"
+
+  if command -v "${tool}" >/dev/null 2>&1; then
+    command -v "${tool}"
+    return 0
+  fi
+
+  if command -v "${tool}.sh" >/dev/null 2>&1; then
+    command -v "${tool}.sh"
+    return 0
+  fi
+
+  if [[ -n "${KAFKA_HOME:-}" && -x "${KAFKA_HOME}/bin/${tool}.sh" ]]; then
+    echo "${KAFKA_HOME}/bin/${tool}.sh"
+    return 0
+  fi
+
+  echo "missing Kafka CLI tool: ${tool}" >&2
+  return 127
+}
+
+run_fixture() {
+  local name="$1"
+  shift
+
+  local out="${ARTIFACT_DIR}/${TARGET}-${name}-$(timestamp_ms).out"
+  local err="${ARTIFACT_DIR}/${TARGET}-${name}-$(timestamp_ms).err"
+  local meta="${ARTIFACT_DIR}/${TARGET}-${name}-$(timestamp_ms).json"
+
+  set +e
+  "$@" >"${out}" 2>"${err}"
+  local status=$?
+  set -e
+
+  python3 - <<PY > "${meta}"
+import json
+print(json.dumps({
+  "schema_version": 1,
+  "target": "${TARGET}",
+  "fixture": "${name}",
+  "bootstrap": "${BOOTSTRAP}",
+  "status": ${status},
+  "stdout": "${out}",
+  "stderr": "${err}",
+}, indent=2))
+PY
+
+  return "${status}"
+}
+
+TOPIC="phase04-cli-${TARGET}-$(timestamp_ms)"
+
+BROKER_API_VERSIONS="$(find_kafka_bin kafka-broker-api-versions)"
+TOPICS="$(find_kafka_bin kafka-topics)"
+GET_OFFSETS="$(find_kafka_bin kafka-get-offsets)"
+PRODUCER="$(find_kafka_bin kafka-console-producer)"
+CONSUMER="$(find_kafka_bin kafka-console-consumer)"
+CONSUMER_GROUPS="$(find_kafka_bin kafka-consumer-groups)"
+
+run_fixture broker-api-versions \
+  "${BROKER_API_VERSIONS}" --bootstrap-server "${BOOTSTRAP}"
+
+run_fixture topic-create \
+  "${TOPICS}" --bootstrap-server "${BOOTSTRAP}" \
+  --create --if-not-exists --topic "${TOPIC}" \
+  --partitions 1 --replication-factor 1
+
+run_fixture topic-describe \
+  "${TOPICS}" --bootstrap-server "${BOOTSTRAP}" \
+  --describe --topic "${TOPIC}"
+
+printf 'k1\tv1\nk2\tv2\n' | run_fixture console-producer \
+  "${PRODUCER}" --bootstrap-server "${BOOTSTRAP}" \
+  --topic "${TOPIC}" \
+  --property parse.key=true \
+  --property key.separator=$'\t'
+
+run_fixture get-offsets-earliest \
+  "${GET_OFFSETS}" --bootstrap-server "${BOOTSTRAP}" \
+  --topic "${TOPIC}" --time earliest
+
+run_fixture get-offsets-latest \
+  "${GET_OFFSETS}" --bootstrap-server "${BOOTSTRAP}" \
+  --topic "${TOPIC}" --time latest
+
+run_fixture console-consumer \
+  "${CONSUMER}" --bootstrap-server "${BOOTSTRAP}" \
+  --topic "${TOPIC}" \
+  --from-beginning \
+  --timeout-ms 10000 \
+  --property print.key=true \
+  --property print.offset=true \
+  --property print.partition=true \
+  --property print.value=true
+
+run_fixture consumer-groups-list \
+  "${CONSUMER_GROUPS}" --bootstrap-server "${BOOTSTRAP}" --list
+```
+
+Then mark executable:
+
+```bash
+chmod +x scripts/differential/kafka-cli-fixtures.sh
+```
+
+This script gives future phases a stable CLI workload surface. For Phase 04, it is enough that the fixture exists, records artifacts, and can run against Kafka or Jansu. Phase 07/08/10 decide whether their APIs are expected to pass.
+
+---
+
+## 4. Add documentation for the lab
+
+Create:
+
+```text
+docs/compatibility/differential-lab.md
+```
+
+````md
+# Differential Kafka Lab
+
+Phase: 04  
+Audit item: AUDIT-012  
+Baseline: Apache Kafka 4.2.0  
+Kafka image: `apache/kafka:4.2.0`
+
+## Purpose
+
+The differential lab compares Jansu against a real Kafka 4.2 broker for every API
+Jansu advertises in `docs/compatibility/kafka-4.2-ledger.json`.
+
+The lab has two tiers:
+
+1. Contract tier: always runs without external services.
+2. External differential tier: runs only with `JANSU_DIFFERENTIAL=1`.
+
+## Current advertised API scope
+
+Jansu currently advertises:
+
+- ApiVersionsRequest
+- MetadataRequest
+
+Produce, Fetch, ListOffsets, consumer groups, idempotence, and transactions remain
+route-level or partial until their owning phases promote them.
+
+## Commands
+
+Run the contract tier:
+
+```sh
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+````
+
+Run the external Kafka 4.2 differential tier:
+
+```sh
+JANSU_DIFFERENTIAL=1 \
+CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential \
+cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+```
+
+Use an already-running Kafka broker:
+
+```sh
+JANSU_DIFFERENTIAL=1 \
+JANSU_DIFF_KAFKA_BOOTSTRAP=127.0.0.1:19092 \
+cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+```
+
+Run Kafka CLI fixtures:
+
+```sh
+scripts/differential/kafka-cli-fixtures.sh 127.0.0.1:19092 kafka42 target/differential/cli
+```
+
+## Artifact shape
+
+Artifacts are written under `target/differential` unless
+`JANSU_DIFF_ARTIFACT_DIR` is set.
+
+Every artifact contains:
+
+* `schema_version`
+* workload name
+* Kafka bootstrap address
+* Jansu bootstrap address where relevant
+* normalized observations
+
+## Completion rule
+
+Phase 04 is complete when:
+
+* Kafka 4.2 can be started locally or supplied externally.
+* Jansu can be started side-by-side.
+* Advertised API behavior is compared against Kafka 4.2.
+* Results are written as artifacts.
+* Ledger proof points to the differential tests.
+* `AUDIT-012` is resolved.
+
+````
+
+---
+
+## 5. Add justfile commands
+
+Append to `justfile`:
+
+```make
+differential-kafka-up:
+    docker compose -f etc/differential/compose.kafka-4.2.yaml up --wait --detach kafka42
+
+differential-kafka-down:
+    docker compose -f etc/differential/compose.kafka-4.2.yaml down --volumes --remove-orphans
+
+differential-lab:
+    JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+
+differential-lab-no-docker bootstrap:
+    JANSU_DIFFERENTIAL=1 JANSU_DIFF_KAFKA_BOOTSTRAP={{ bootstrap }} CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+
+differential-cli-fixture target bootstrap artifact_dir="target/differential/cli":
+    scripts/differential/kafka-cli-fixtures.sh {{ bootstrap }} {{ target }} {{ artifact_dir }}
+````
+
+The existing justfile has Kafka 3.9 and 4.1 helpers, but no Kafka 4.2 helper yet, so this fills the Phase 04 baseline gap. 
+
+---
+
+## 6. Add a CI job that uploads artifacts
+
+Create:
+
+```text
+.github/workflows/differential-kafka-lab.yml
+```
+
+```yaml
+name: differential-kafka-lab
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "AUDIT.md"
+      - "MASTER_PLAN.md"
+      - "docs/compatibility/**"
+      - "etc/differential/**"
+      - "jansu-broker/tests/differential_lab.rs"
+      - "jansu-broker/tests/compatibility_contract.rs"
+      - "phase-logs/**"
+      - "tips/phases/04-differential-kafka-lab.md"
+      - "justfile"
+
+jobs:
+  phase04-differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Pull Kafka 4.2 image
+        run: docker compose -f etc/differential/compose.kafka-4.2.yaml pull
+
+      - name: Run compatibility contract
+        run: |
+          CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract \
+          cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+
+      - name: Run differential Kafka lab
+        run: |
+          JANSU_DIFFERENTIAL=1 \
+          JANSU_DIFF_ARTIFACT_DIR=target/differential \
+          CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential \
+          cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+
+      - name: Upload differential artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase04-differential-artifacts
+          path: target/differential
+```
+
+This is what converts Phase 04 from “we have some tests” into “we have published proof.”
+
+---
+
+## 7. Tighten the compatibility contract for Phase 04 completion
+
+Update:
+
+```text
+jansu-broker/tests/compatibility_contract.rs
+```
+
+Change:
+
+```rust
+const PHASE_LOG_ALLOWED_STATUSES: [&str; 3] =
+    ["legacy-unlogged", "legacy-complete", "in-progress"];
+```
+
+to:
+
+```rust
+const PHASE_LOG_ALLOWED_STATUSES: [&str; 4] =
+    ["legacy-unlogged", "legacy-complete", "in-progress", "complete"];
+```
+
+Then update the manifest status handling:
+
+```rust
+match entry.status.as_str() {
+    "legacy-unlogged" => {}
+    "legacy-complete" => {
+        assert!(log_path.exists());
+    }
+    "in-progress" | "complete" => {
+        assert_structured_phase_log(&log_path);
+    }
+    other => panic!("unexpected manifest status {other} for phase {phase}"),
+}
+```
+
+Add a Phase 04-specific completion guard:
+
+```rust
+#[test]
+fn phase04_differential_lab_completion_contract() {
+    let audit = read_repo_file("AUDIT.md");
+    assert!(
+        audit.contains("`AUDIT-012` status: `resolved`; phase: `04`"),
+        "AUDIT-012 must be resolved when Phase 04 is marked complete"
+    );
+
+    let manifest = load_phase_log_manifest();
+    let phase04 = manifest
+        .phases
+        .iter()
+        .find(|entry| entry.phase == "04")
+        .expect("phase 04 manifest entry must exist");
+
+    assert_eq!(
+        "complete", phase04.status,
+        "Phase 04 must be marked complete after the differential lab lands"
+    );
+
+    for required in [
+        "docs/compatibility/differential-lab.md",
+        "etc/differential/compose.kafka-4.2.yaml",
+        "scripts/differential/kafka-cli-fixtures.sh",
+        "jansu-broker/tests/differential_lab.rs",
+    ] {
+        assert!(
+            repo_root().join(required).exists(),
+            "Phase 04 completion requires {required}"
+        );
+    }
+
+    assert!(
+        phase04
+            .verification_commands
+            .iter()
+            .any(|command| command.contains("--test differential_lab")),
+        "Phase 04 manifest must include the differential lab verification command"
+    );
+}
+```
+
+This prevents Phase 04 from regressing back to “paper complete.”
+
+---
+
+## 8. Update the compatibility ledger
+
+Update:
+
+```text
+docs/compatibility/kafka-4.2-ledger.json
+```
+
+For `ApiVersionsRequest` / API key `18`, add this proof entry:
+
+```json
+"jansu-broker/tests/differential_lab.rs::differential_api_versions_advertised_subset_of_kafka42"
+```
+
+For `MetadataRequest` / API key `3`, add this proof entry:
+
+```json
+"jansu-broker/tests/differential_lab.rs::differential_metadata_for_empty_cluster_matches_advertised_contract"
+```
+
+Also add a `client_tests.phase04` object for both rows:
+
+```json
+"client_tests": {
+  "phase04": {
+    "baseline": "apache/kafka:4.2.0",
+    "command": "JANSU_DIFFERENTIAL=1 cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+    "artifacts": "target/differential/*.json"
+  }
+}
+```
+
+Do **not** mark Produce, Fetch, ListOffsets, or group APIs compatible because of this Phase 04 work alone. Their rows can reference the Phase 04 harness as infrastructure, but semantic promotion remains owned by Phase 07, Phase 08, and Phase 10. The ledger already records Produce as routed but unadvertised because stable Java/librdkafka differential proof was missing. 
+
+---
+
+## 9. Update `AUDIT.md`
+
+Move `AUDIT-012` out of `Blocked`.
+
+Remove:
+
+```md
+- `AUDIT-012` status: `blocked`; phase: `04`; area: differential Kafka lab. Full differential certification is blocked until a stable local Kafka harness and client matrix are available in the repo.
+```
+
+Add under `Resolved`:
+
+```md
+- `AUDIT-012` status: `resolved`; phase: `04`; area: differential Kafka lab. Stable Kafka 4.2 reference harness, side-by-side Jansu broker launch, advertised-API differential tests, Kafka CLI fixtures, CI artifact upload, justfile commands, and ledger-backed proof hooks now exist. Later semantic mismatches are owned by the phase that advertises or promotes the affected API.
+```
+
+This is important: Phase 04 should not stay blocked because Phase 07/08 semantics are incomplete. Phase 04’s job is to provide the lab.
+
+---
+
+## 10. Update `phase-logs/index.json`
+
+Change Phase 04 from:
+
+```json
+"status": "legacy-unlogged"
+```
+
+to:
+
+```json
+"status": "complete"
+```
+
+Update Phase 04 primary paths:
+
+```json
+"primary_paths": [
+  "tips/phases/04-differential-kafka-lab.md",
+  "phase-logs/04-differential-kafka-lab.md.log",
+  "AUDIT.md",
+  "phase-logs/index.json",
+  "docs/compatibility/kafka-4.2-ledger.json",
+  "docs/compatibility/differential-lab.md",
+  "etc/differential/compose.kafka-4.2.yaml",
+  "scripts/differential/kafka-cli-fixtures.sh",
+  "jansu-broker/tests/differential_lab.rs",
+  "jansu-broker/tests/compatibility_contract.rs",
+  "justfile"
+]
+```
+
+Update verification commands:
+
+```json
+"verification_commands": [
+  "env CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture",
+  "env JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture",
+  "env JANSU_DIFFERENTIAL=1 just differential-lab",
+  "cargo fmt --all --check",
+  "git diff --check"
+]
+```
+
+Update residual risks:
+
+```json
+"residual_risks": [
+  "The lab actively gates only APIs currently advertised by Jansu; unadvertised Produce, Fetch, ListOffsets, consumer-group, idempotence, and transaction workloads remain evidence for their owning phases.",
+  "The external differential tier requires Docker or a supplied Kafka 4.2 bootstrap address.",
+  "Java client and broader franz-go/Sarama matrix expansion remains future Phase 16 ecosystem work unless a phase requires it earlier."
+]
+```
+
+---
+
+## 11. Update the canonical Phase 04 log
+
+Update:
+
+```text
+phase-logs/04-differential-kafka-lab.md.log
+```
+
+Append or replace with structured content:
+
+```md
+# Phase 04 - Differential Kafka Lab Log
+
+## Date
+
+- 2026-05-03
+
+## Phase File
+
+- `tips/phases/04-differential-kafka-lab.md`
+
+## Intent
+
+- Resolve `AUDIT-012` by adding a stable Kafka 4.2 differential lab.
+- Compare every currently advertised Jansu API against a real Kafka 4.2 broker.
+- Preserve artifacts for future Produce, Fetch, ListOffsets, consumer-group, and ecosystem phases.
+
+## Files Touched
+
+- `AUDIT.md`
+- `docs/compatibility/differential-lab.md`
+- `docs/compatibility/kafka-4.2-ledger.json`
+- `etc/differential/compose.kafka-4.2.yaml`
+- `.github/workflows/differential-kafka-lab.yml`
+- `jansu-broker/tests/differential_lab.rs`
+- `jansu-broker/tests/compatibility_contract.rs`
+- `justfile`
+- `phase-logs/04-differential-kafka-lab.md.log`
+- `phase-logs/index.json`
+- `scripts/differential/kafka-cli-fixtures.sh`
+- `tips/phases/04-differential-kafka-lab.md`
+
+## Ledger Rows Touched
+
+- API key 3 `MetadataRequest`
+- API key 18 `ApiVersionsRequest`
+
+## Tests Added
+
+- `jansu-broker/tests/differential_lab.rs::differential_api_versions_advertised_subset_of_kafka42`
+- `jansu-broker/tests/differential_lab.rs::differential_metadata_for_empty_cluster_matches_advertised_contract`
+- `jansu-broker/tests/differential_lab.rs::differential_librdkafka_smoke_create_produce_consume_commit_offsets` ignored manual matrix seed
+- `jansu-broker/tests/compatibility_contract.rs::phase04_differential_lab_completion_contract`
+
+## Verification Commands
+
+- `env CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture`
+- `env JANSU_DIFFERENTIAL=1 CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture`
+- `env JANSU_DIFFERENTIAL=1 just differential-lab`
+- `cargo fmt --all --check`
+- `git diff --check`
+
+## Outcomes
+
+- Added a pinned Kafka 4.2 reference broker.
+- Added side-by-side Jansu/Kafka differential tests.
+- Added normalized JSON artifact output.
+- Added CLI fixture runner for Kafka command-line tools.
+- Added CI artifact upload.
+- Added ledger-backed proof for the currently advertised API surface.
+- Resolved `AUDIT-012`.
+
+## Residual Risks
+
+- Produce, Fetch, ListOffsets, consumer groups, idempotence, and transactions are not promoted by Phase 04 alone.
+- Deeper client matrix expansion remains owned by later API and ecosystem phases.
+- External differential tests require Docker or a supplied Kafka 4.2 bootstrap address.
+```
+
+---
+
+## 12. Optional but valuable: clarify Phase 04 doc without reducing detail
+
+Append to:
+
+```text
+tips/phases/04-differential-kafka-lab.md
+```
+
+```md
+## Completion policy added 2026-05-03
+
+Phase 04 owns the differential infrastructure, artifact schema, Kafka 4.2 reference
+target, and compatibility-ledger proof plumbing.
+
+A semantic mismatch for an unadvertised API does not block Phase 04 completion. It
+must be recorded as evidence for the owning phase. An advertised API mismatch does
+block Phase 04 and must fail the differential lab.
+```
+
+That prevents Phase 04 from getting reopened every time Phase 07/08 finds a real behavioral bug.
+
+---
+
+# Validation plan
+
+Run these in order.
+
+```bash
+cargo fmt --all --check
+```
+
+```bash
+CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-contract \
+cargo test -p jansu-broker --test compatibility_contract --all-features -- --nocapture
+```
+
+```bash
+JANSU_DIFFERENTIAL=1 \
+CARGO_TARGET_DIR=/tmp/jansu-verify-phase04-differential \
+cargo test -p jansu-broker --test differential_lab --all-features -- --nocapture
+```
+
+```bash
+JANSU_DIFFERENTIAL=1 just differential-lab
+```
+
+```bash
+git diff --check
+```
+
+Expected outcomes:
+
+| Check                                                                 | Expected result                                                                 |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `compatibility_contract`                                              | Passes, including Phase 04 completion guard                                     |
+| `differential_api_versions_advertised_subset_of_kafka42`              | Jansu advertised versions exactly match ledger; Kafka 4.2 advertises a superset |
+| `differential_metadata_for_empty_cluster_matches_advertised_contract` | Kafka and Jansu both return valid empty-cluster metadata shape                  |
+| Artifacts                                                             | JSON files appear under `target/differential`                                   |
+| `AUDIT-012`                                                           | Marked resolved                                                                 |
+| Phase 04 manifest                                                     | Marked complete                                                                 |
+| Produce/Fetch/ListOffsets                                             | Not promoted by Phase 04 alone                                                  |
+
+---
+
+# Why this finishes Phase 04 and unblocks Phase 07/08
+
+Phase 04 should not attempt to fix Produce, Fetch, ListOffsets, leader epochs, idempotence, or transactions. It should give those phases a stable proof machine.
+
+After this lands:
+
+* Phase 07 can add Produce workloads to `differential_lab.rs` and promote Produce only after the Java/librdkafka/CLI artifacts are green.
+* Phase 08 can add Fetch, ListOffsets, and OffsetForLeaderEpoch workloads, including the current mixed-partition and produced-epoch failures.
+* Phase 10 can replace the current Jansu-only `cg_differential.rs` posture with true Kafka-vs-Jansu group comparisons.
+* Phase 16 can widen from Rust/CLI/librdkafka to Java, franz-go, Sarama, performance, and migration proof.
+
+This makes Phase 04 complete as infrastructure, while preserving honest compatibility claims for the APIs that are still under active semantic work.
+
+[1]: https://kafka.apache.org/42/getting-started/docker/?utm_source=chatgpt.com "Docker | Apache Kafka"
+

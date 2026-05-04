@@ -633,6 +633,257 @@ where
     Ok(())
 }
 
+/// Cooperative-sticky rebalance: two members form a group using only
+/// the cooperative-sticky protocol, then a second member joins
+/// triggering a rebalance. Existing members must receive
+/// `RebalanceInProgress` on heartbeat, and the group must re-form
+/// successfully after all members rejoin and sync.
+pub async fn cooperative_sticky_rebalance<G>(
+    cluster_id: impl Into<String>,
+    broker_id: i32,
+    sc: G,
+) -> Result<()>
+where
+    G: Storage + Clone,
+{
+    register_broker(cluster_id, broker_id, sc.clone()).await?;
+
+    let mut controller = Controller::with_storage(sc.clone())?;
+
+    let session_timeout_ms = 45_000;
+    let rebalance_timeout_ms = Some(300_000);
+    let group_instance_id = None;
+    let reason = None;
+
+    let group_id: String = alphanumeric_string(15);
+    debug!(?group_id);
+
+    // Protocol list with ONLY cooperative-sticky
+    let sticky_protocols = [JoinGroupRequestProtocol::default()
+        .name(COOPERATIVE_STICKY.into())
+        .metadata(common::random_bytes(15))];
+
+    // --- 1st member: MemberIdRequired dance ---
+    let mid_required = join_group(
+        &mut controller,
+        Some(CLIENT_ID),
+        group_id.as_str(),
+        session_timeout_ms,
+        rebalance_timeout_ms,
+        "",
+        group_instance_id,
+        PROTOCOL_TYPE,
+        Some(&sticky_protocols[..]),
+        reason,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::MemberIdRequired,
+        ErrorCode::try_from(mid_required.error_code)?
+    );
+    let first_member_id = mid_required.member_id;
+
+    // Complete the join
+    let first_join = join_group(
+        &mut controller,
+        Some(CLIENT_ID),
+        group_id.as_str(),
+        session_timeout_ms,
+        rebalance_timeout_ms,
+        &first_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        Some(&sticky_protocols[..]),
+        reason,
+    )
+    .await?;
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(first_join.error_code)?);
+    assert_eq!(
+        Some(COOPERATIVE_STICKY.into()),
+        first_join.protocol_name,
+        "single-member group should negotiate cooperative-sticky"
+    );
+    assert_eq!(first_member_id, first_join.leader);
+    let gen0 = first_join.generation_id;
+
+    // Leader syncs — group forms with cooperative-sticky
+    let first_assignment = common::random_bytes(15);
+    let assignments = [SyncGroupRequestAssignment::default()
+        .member_id(first_member_id.clone())
+        .assignment(first_assignment.clone())];
+
+    let sync_response = sync_group(
+        &mut controller,
+        group_id.as_str(),
+        gen0,
+        &first_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        COOPERATIVE_STICKY,
+        &assignments,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::None,
+        ErrorCode::try_from(sync_response.error_code)?
+    );
+    assert_eq!(Some(COOPERATIVE_STICKY.into()), sync_response.protocol_name);
+    assert_eq!(first_assignment, sync_response.assignment);
+
+    // --- 2nd member: MemberIdRequired dance ---
+    let mid_required_2 = join_group(
+        &mut controller,
+        Some(CLIENT_ID),
+        group_id.as_str(),
+        session_timeout_ms,
+        rebalance_timeout_ms,
+        "",
+        group_instance_id,
+        PROTOCOL_TYPE,
+        Some(&sticky_protocols[..]),
+        reason,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::MemberIdRequired,
+        ErrorCode::try_from(mid_required_2.error_code)?
+    );
+    let second_member_id = mid_required_2.member_id;
+
+    // Complete the 2nd member's join — this triggers rebalance (Forming state)
+    let second_join = join_group(
+        &mut controller,
+        Some(CLIENT_ID),
+        group_id.as_str(),
+        session_timeout_ms,
+        rebalance_timeout_ms,
+        &second_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        Some(&sticky_protocols[..]),
+        reason,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::None,
+        ErrorCode::try_from(second_join.error_code)?
+    );
+    let gen1 = second_join.generation_id;
+    assert!(gen1 > gen0, "rebalance should bump generation");
+
+    // 1st member heartbeat with old generation should signal rebalance
+    let HeartbeatResponse { error_code, .. } = heartbeat(
+        &mut controller,
+        group_id.as_str(),
+        gen0,
+        &first_member_id,
+        group_instance_id,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::RebalanceInProgress,
+        ErrorCode::try_from(error_code)?,
+        "stale-generation heartbeat should signal rebalance"
+    );
+
+    // 1st member rejoins at the new generation
+    let first_rejoin = join_group(
+        &mut controller,
+        Some(CLIENT_ID),
+        group_id.as_str(),
+        session_timeout_ms,
+        rebalance_timeout_ms,
+        &first_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        Some(&sticky_protocols[..]),
+        reason,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::None,
+        ErrorCode::try_from(first_rejoin.error_code)?
+    );
+    assert_eq!(
+        first_member_id, first_rejoin.leader,
+        "original leader should remain leader"
+    );
+    assert_eq!(
+        gen1, first_rejoin.generation_id,
+        "should be same generation as 2nd member"
+    );
+
+    // Leader syncs with assignments for both members
+    let first_assignment_02 = common::random_bytes(15);
+    let second_assignment_02 = common::random_bytes(15);
+    let assignments = [
+        SyncGroupRequestAssignment::default()
+            .member_id(first_member_id.clone())
+            .assignment(first_assignment_02.clone()),
+        SyncGroupRequestAssignment::default()
+            .member_id(second_member_id.clone())
+            .assignment(second_assignment_02.clone()),
+    ];
+
+    let sync_response = sync_group(
+        &mut controller,
+        group_id.as_str(),
+        gen1,
+        &first_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        COOPERATIVE_STICKY,
+        &assignments,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::None,
+        ErrorCode::try_from(sync_response.error_code)?
+    );
+    assert_eq!(first_assignment_02, sync_response.assignment);
+
+    // 2nd member syncs
+    let sync_response = sync_group(
+        &mut controller,
+        group_id.as_str(),
+        gen1,
+        &second_member_id,
+        group_instance_id,
+        PROTOCOL_TYPE,
+        COOPERATIVE_STICKY,
+        &assignments,
+    )
+    .await?;
+    assert_eq!(
+        ErrorCode::None,
+        ErrorCode::try_from(sync_response.error_code)?
+    );
+    assert_eq!(second_assignment_02, sync_response.assignment);
+
+    // Both members heartbeat OK at the current generation
+    let HeartbeatResponse { error_code, .. } = heartbeat(
+        &mut controller,
+        group_id.as_str(),
+        gen1,
+        &first_member_id,
+        group_instance_id,
+    )
+    .await?;
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(error_code)?);
+
+    let HeartbeatResponse { error_code, .. } = heartbeat(
+        &mut controller,
+        group_id.as_str(),
+        gen1,
+        &second_member_id,
+        group_instance_id,
+    )
+    .await?;
+    assert_eq!(ErrorCode::None, ErrorCode::try_from(error_code)?);
+
+    Ok(())
+}
+
 #[cfg(feature = "postgres")]
 mod pg {
     use std::sync::Arc;
@@ -778,6 +1029,21 @@ mod in_memory {
         )
         .await
     }
+
+    #[tokio::test]
+    async fn cooperative_sticky_rebalance() -> Result<()> {
+        let _guard = common::init_tracing()?;
+
+        let cluster_id = Uuid::now_v7();
+        let broker_id = rng().random_range(0..i32::MAX);
+
+        super::cooperative_sticky_rebalance(
+            cluster_id,
+            broker_id,
+            storage_container(cluster_id, broker_id).await?,
+        )
+        .await
+    }
 }
 
 #[cfg(feature = "libsql")]
@@ -844,6 +1110,21 @@ mod lite {
         )
         .await
     }
+
+    #[tokio::test]
+    async fn cooperative_sticky_rebalance() -> Result<()> {
+        let _guard = common::init_tracing()?;
+
+        let cluster_id = Uuid::now_v7();
+        let broker_id = rng().random_range(0..i32::MAX);
+
+        super::cooperative_sticky_rebalance(
+            cluster_id,
+            broker_id,
+            storage_container(cluster_id, broker_id).await?,
+        )
+        .await
+    }
 }
 
 #[cfg(feature = "slatedb")]
@@ -904,6 +1185,21 @@ mod slatedb {
         let broker_id = rng().random_range(0..i32::MAX);
 
         super::offset_commit_fencing_during_rebalance(
+            cluster_id,
+            broker_id,
+            storage_container(cluster_id, broker_id).await?,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn cooperative_sticky_rebalance() -> Result<()> {
+        let _guard = common::init_tracing()?;
+
+        let cluster_id = Uuid::now_v7();
+        let broker_id = rng().random_range(0..i32::MAX);
+
+        super::cooperative_sticky_rebalance(
             cluster_id,
             broker_id,
             storage_container(cluster_id, broker_id).await?,

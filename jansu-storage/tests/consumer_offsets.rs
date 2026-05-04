@@ -16,9 +16,9 @@ mod common;
 
 use std::{slice::from_ref, time::Duration};
 
-use crate::common::{Error, build_storage, create_topic, init_tracing, register_broker};
 #[cfg(feature = "postgres")]
 use crate::common::ensure_postgres_offset_schema;
+use crate::common::{Error, build_storage, create_topic, init_tracing, register_broker};
 use jansu_sans_io::offset_commit_request::OffsetCommitRequestPartition;
 use jansu_storage::{OffsetCommitRequest, Storage, Topition};
 use rand::{RngExt as _, rng};

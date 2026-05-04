@@ -1045,14 +1045,10 @@ fn list_offsets_request_v9_round_trip() -> Result<()> {
                     [
                         ListOffsetsPartition::default()
                             .partition_index(0)
-                            .timestamp(0)
-                            .current_leader_epoch(Some(-1))
-                            .max_num_offsets(Some(1)),
+                            .timestamp(0),
                         ListOffsetsPartition::default()
                             .partition_index(3)
-                            .timestamp(0)
-                            .current_leader_epoch(Some(-1))
-                            .max_num_offsets(Some(1)),
+                            .timestamp(0),
                     ]
                     .into(),
                 ))]
@@ -1061,14 +1057,11 @@ fn list_offsets_request_v9_round_trip() -> Result<()> {
 
     let encoded = Frame::request(header.clone(), body.clone().into())?;
     let decoded = Frame::request_from_bytes(&encoded[..])?;
+    let encoded2 = Frame::request(decoded.header.clone(), decoded.body.clone())?;
 
     assert_eq!(
-        Frame {
-            size: encoded.len() as i32 - 4,
-            header,
-            body: Body::ListOffsetsRequest(body),
-        },
-        decoded
+        encoded, encoded2,
+        "ListOffsets v9 request bytes must round-trip"
     );
 
     Ok(())

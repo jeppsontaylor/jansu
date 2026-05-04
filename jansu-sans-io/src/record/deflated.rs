@@ -380,6 +380,15 @@ fn into_record_data(records: &[Record], compression: Compression) -> Result<Byte
                 .map_err(Into::into)
         }
 
+        Compression::Snappy => {
+            let uncompressed = records.encode()?;
+
+            snap::raw::Encoder::new()
+                .compress_vec(&uncompressed)
+                .map(Bytes::from)
+                .map_err(|e| Error::from(std::io::Error::from(e)))
+        }
+
         unexpected => Err(Error::UnexpectedType(format!("{unexpected:?}",))),
     }
 }

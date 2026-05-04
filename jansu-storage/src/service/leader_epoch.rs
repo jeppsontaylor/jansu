@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use jansu_sans_io::ErrorCode;
 use rama::Context;
 
 use crate::{LeaderEpochRecord, Result, Storage, Topition};
@@ -34,4 +35,50 @@ pub(crate) fn current_leader_epoch(history: &[LeaderEpochRecord]) -> Option<Lead
 
 pub(crate) fn leader_epoch_or_unknown(history: &[LeaderEpochRecord]) -> i32 {
     current_leader_epoch(history).map_or(-1, |record| record.epoch)
+}
+
+/// Return the leader epoch that was active for `offset`.
+///
+/// Kafka ListOffsets v4+ includes the leader epoch associated with the
+/// returned offset. That is not always the current epoch.
+pub(crate) fn leader_epoch_for_offset(history: &[LeaderEpochRecord], offset: i64) -> i32 {
+    if history.is_empty() {
+        return -1;
+    }
+
+    history
+        .iter()
+        .rev()
+        .find(|record| record.start_offset <= offset)
+        .or_else(|| history.first())
+        .map_or(-1, |record| record.epoch)
+}
+
+/// Apply Kafka current_leader_epoch fencing semantics.
+///
+/// - `None` or `-1` means no fencing.
+/// - Lower than current → `FencedLeaderEpoch`.
+/// - Higher than current → `UnknownLeaderEpoch`.
+/// - Equal → OK (returns `None`).
+pub(crate) fn current_leader_epoch_error(
+    requested: Option<i32>,
+    history: &[LeaderEpochRecord],
+) -> Option<ErrorCode> {
+    let requested = requested?;
+
+    if requested == -1 {
+        return None;
+    }
+
+    let Some(current) = current_leader_epoch(history) else {
+        return Some(ErrorCode::UnknownLeaderEpoch);
+    };
+
+    if requested < current.epoch {
+        Some(ErrorCode::FencedLeaderEpoch)
+    } else if requested > current.epoch {
+        Some(ErrorCode::UnknownLeaderEpoch)
+    } else {
+        None
+    }
 }

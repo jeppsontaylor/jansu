@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use common::{alphanumeric_string, init_tracing};
@@ -143,25 +143,35 @@ async fn api_versions(broker: &Broker) -> Result<ApiVersionsResponse> {
 }
 
 #[tokio::test]
-async fn api_versions_do_not_advertise_produce() -> Result<()> {
+async fn api_versions_advertises_produce_after_phase_07() -> Result<()> {
     let _guard = init_tracing()?;
     let storage = storage().await?;
     let broker = broker(storage)?;
 
     let response = api_versions(&broker).await?;
     let api_keys = response.api_keys.unwrap_or_default();
-    let api_keys = api_keys
-        .iter()
-        .map(|api_version| api_version.api_key)
-        .collect::<BTreeSet<_>>();
 
+    let produce = api_keys
+        .iter()
+        .find(|api_version| api_version.api_key == ProduceRequest::KEY)
+        .expect("Produce must be advertised after Phase 07 completion");
+
+    assert_eq!(0, produce.min_version);
+    assert_eq!(11, produce.max_version);
+
+    // ApiVersions and Metadata must still be advertised
     assert!(
-        api_keys.contains(&ApiVersionsRequest::KEY),
+        api_keys
+            .iter()
+            .any(|v| v.api_key == ApiVersionsRequest::KEY),
         "ApiVersions must still advertise itself"
     );
-    assert!(api_keys.contains(&jansu_sans_io::MetadataRequest::KEY));
-    assert_eq!(2, api_keys.len());
-    assert!(!api_keys.contains(&ProduceRequest::KEY));
+    assert!(
+        api_keys
+            .iter()
+            .any(|v| v.api_key == jansu_sans_io::MetadataRequest::KEY)
+    );
+    assert_eq!(3, api_keys.len());
 
     Ok(())
 }
@@ -261,6 +271,35 @@ async fn produce_request_versions_decode_across_supported_versions() -> Result<(
         );
         assert_eq!(0, partitions[0].base_offset);
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn produce_acks_zero_real_storage_appends_but_suppresses_wire() -> Result<()> {
+    let _guard = init_tracing()?;
+    let topic = alphanumeric_string(15);
+    let storage = storage_with_topic(&topic).await?;
+    let broker = broker(storage.clone())?;
+
+    let response = broker
+        .serve(
+            Context::default(),
+            produce_request(&topic, Ack::None.into(), b"silent", 11)?,
+        )
+        .await?;
+
+    // Wire response is suppressed for acks=0
+    assert!(response.is_empty(), "acks=0 must suppress wire response");
+
+    // But the data must have been appended to storage
+    let tp = jansu_storage::Topition::new(&topic, 0);
+    let stage = storage.offset_stage(&tp).await.map_err(Error::from)?;
+    assert_eq!(
+        1,
+        stage.high_watermark(),
+        "acks=0 must still append to storage"
+    );
 
     Ok(())
 }

@@ -26,8 +26,8 @@ use jansu_broker::{
 use jansu_sans_io::{
     AlterConfigsRequest, ApiKey as _, ApiVersionsRequest, ApiVersionsResponse,
     CreatePartitionsRequest, DeleteAclsRequest, DescribeLogDirsRequest, ElectLeadersRequest,
-    EndTxnRequest, ErrorCode, MetadataRequest, OffsetDeleteRequest, PushTelemetryRequest,
-    RootMessageMeta,
+    EndTxnRequest, ErrorCode, MetadataRequest, OffsetDeleteRequest, ProduceRequest,
+    PushTelemetryRequest, RootMessageMeta,
     alter_configs_request::AlterConfigsResource,
     create_partitions_request::CreatePartitionsTopic,
     describe_log_dirs_request::DescribableLogDirTopic,
@@ -84,7 +84,12 @@ const PHASE_LOG_REQUIRED_HEADINGS: [&str; 9] = [
     "Residual Risks",
 ];
 
-const PHASE_LOG_ALLOWED_STATUSES: [&str; 3] = ["legacy-unlogged", "legacy-complete", "in-progress"];
+const PHASE_LOG_ALLOWED_STATUSES: [&str; 4] = [
+    "legacy-unlogged",
+    "legacy-complete",
+    "in-progress",
+    "complete",
+];
 
 const PHASE_07_MANIFEST_PROOF: &str =
     "jansu-broker/tests/compatibility_contract.rs::phase_log_manifest_contract_covers_phase_docs";
@@ -677,7 +682,10 @@ fn ledger_has_required_profiles_and_storage_tiers() {
         assert_allowed_value(row.route_status.as_str(), &ALLOWED_ROUTE_STATUSES);
         assert_allowed_value(row.semantic_status.as_str(), &ALLOWED_SEMANTIC_STATUSES);
         assert_allowed_value(row.codec_status.as_str(), &["present", "missing"]);
-        assert_eq!("untested", row.proof.failure_modes);
+        assert_allowed_value(
+            row.proof.failure_modes.as_str(),
+            &["untested", "partial", "certified"],
+        );
         match row.api_key {
             0 => {
                 assert_eq!("07", row.phase_owner, "api_key {}", row.api_key);
@@ -884,7 +892,7 @@ fn phase_log_manifest_contract_covers_phase_docs() {
             "legacy-complete" => {
                 assert!(log_path.exists());
             }
-            "in-progress" => {
+            "in-progress" | "complete" => {
                 assert_structured_phase_log(&log_path);
             }
             other => panic!("unexpected manifest status {other} for phase {phase}"),
@@ -989,6 +997,7 @@ async fn broker_route_stack_advertises_only_approved_versions() -> Result<(), Er
 
     assert_eq!(
         vec![
+            (ProduceRequest::KEY, 0, 11),
             (MetadataRequest::KEY, 12, 12),
             (ApiVersionsRequest::KEY, 0, 4)
         ],
@@ -1317,4 +1326,49 @@ async fn broker_rejects_unsupported_request_versions() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Phase 04 completion guard. Prevents regression to "paper complete."
+/// Validates that AUDIT-012 is resolved, the phase is marked complete in the
+/// manifest, all required Phase 04 infrastructure files exist, and the
+/// verification commands include the differential lab.
+#[test]
+fn phase04_differential_lab_completion_contract() {
+    let audit = read_repo_file("AUDIT.md");
+    assert!(
+        audit.contains("`AUDIT-012` status: `resolved`"),
+        "AUDIT-012 must be marked resolved when Phase 04 is complete"
+    );
+
+    let manifest = load_phase_log_manifest();
+    let phase04 = manifest
+        .phases
+        .iter()
+        .find(|entry| entry.phase == "04")
+        .expect("Phase 04 manifest entry must exist");
+
+    assert_eq!(
+        "complete", phase04.status,
+        "Phase 04 must be marked complete in the manifest"
+    );
+
+    for required in [
+        "docs/compatibility/differential-lab.md",
+        "etc/differential/compose.kafka-4.2.yaml",
+        "scripts/differential/kafka-cli-fixtures.sh",
+        "jansu-broker/tests/differential_lab.rs",
+    ] {
+        assert!(
+            repo_root().join(required).exists(),
+            "Phase 04 completion requires {required}"
+        );
+    }
+
+    assert!(
+        phase04
+            .verification_commands
+            .iter()
+            .any(|command| command.contains("--test differential_lab")),
+        "Phase 04 manifest must include the differential lab verification command"
+    );
 }

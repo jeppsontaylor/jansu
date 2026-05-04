@@ -79,5 +79,60 @@ Track the Produce exactness slice for phase 07: validation before append, storag
 
 ## Residual Risks
 
-- Produce is still unadvertised in `ApiVersions` because no stable Java/librdkafka differential harness was found in this repo.
+- Differential Java/librdkafka proof deferred to Phase 04/AUDIT-012.
+- v12/v13 topic-ID Produce not implemented; advertised cap is v11.
 - Later phases still own leader epochs, durable idempotence, transactions, retention, compaction, delete-record behavior changes, and any differential certification beyond the current focused checks.
+- DynoStore lake-sink mutation ordering may advance watermark before schema validation (tracked separately).
+
+---
+
+## Session 2 - Phase 07 Advertisement Completion
+
+### Date
+
+2026-05-04
+
+### Agent
+
+Antigravity (Gemini)
+
+### Prompt
+
+Complete Phase 07 Produce Exactness to 100% — implement remaining gaps, fix bugs, add tests, advertise Produce, and update ledger/contract.
+
+### Changes
+
+#### Code Changes
+- `jansu-sans-io/src/record/deflated.rs` — Added Snappy encode path (`snap::raw::Encoder`) to `into_record_data`, completing the full Kafka compression codec matrix (none, gzip, snappy, lz4, zstd).
+- `jansu-service/src/stream.rs` — Fixed inverted frame-size comparison bug. Was: `maximum_frame_size > frame_length(size)` (rejected small frames, allowed oversized). Now: `frame_length(size) > maximum_frame_size`.
+- `jansu-storage/src/service/produce.rs` — Added batch-size validation (`MAX_MESSAGE_BYTES = 1_048_588`) in `validate_batch`, rejecting oversized batches with `MessageTooLarge` before any storage mutation.
+- `jansu-broker/src/service.rs` — Added `ProduceRequest::KEY` to `advertised_versions()` with range 0..=11.
+
+#### Test Changes
+- `jansu-storage/tests/produce_exactness.rs` — Added Snappy to compression matrix; added `oversized_record_is_rejected_without_append` and `acks_zero_is_valid_and_appends` tests. 16 tests total (was 14).
+- `jansu-broker/tests/produce_exactness.rs` — Replaced `api_versions_do_not_advertise_produce` with `api_versions_advertises_produce_after_phase_07`; added `produce_acks_zero_real_storage_appends_but_suppresses_wire`. 5 tests total (was 4).
+- `jansu-broker/tests/compatibility_contract.rs` — Updated `broker_route_stack_advertises_only_approved_versions` to expect Produce in advertised APIs. Added `ProduceRequest` import.
+
+#### Ledger & Audit Changes
+- `docs/compatibility/kafka-4.2-ledger.json` — API key 0 upgraded: `current_advertised_versions` and `approved_advertised_versions` set to `{min: 0, max: 11}`, `semantic_status` → `compatible`, `failure_modes` → `partial`, profiles updated to `green` for jansu-native/slatedb/compat-preview.
+- `AUDIT.md` — `AUDIT-003` moved from `open` to `resolved`.
+
+### Verification
+
+```
+# Storage produce exactness: 16 passed
+env CARGO_TARGET_DIR=/tmp/jansu-verify-phase07 cargo test -p jansu-storage --test produce_exactness --no-default-features --features dynostore
+
+# Broker produce exactness: 5 passed
+env CARGO_TARGET_DIR=/tmp/jansu-verify-phase07 cargo test -p jansu-broker --test produce_exactness --all-features
+
+# Compatibility contract: 15 passed
+env CARGO_TARGET_DIR=/tmp/jansu-verify-phase07 cargo test -p jansu-broker --test compatibility_contract --all-features
+
+# Sans-IO deflated tests: 8 passed
+env CARGO_TARGET_DIR=/tmp/jansu-verify-phase07 cargo test -p jansu-sans-io --all-features --lib -- deflated
+```
+
+### Outcome
+
+Phase 07 Produce Exactness is now complete for non-transactional, non-idempotent producers. Produce is advertised in ApiVersions response as v0..=11.
