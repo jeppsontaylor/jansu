@@ -178,8 +178,160 @@
       "purpose": "verify LICENSE file"
     },
     "MASTER_PLAN.md": {
-      "command": "just score",
-      "purpose": "verify master plan routing"
+        "command": "just score",
+        "purpose": "verify master plan routing"
+    },
+    "about.hbs": {
+        "command": "just fast",
+        "purpose": "generic proof for documentation file"
+    },
+    "about.toml": {
+        "command": "just fast",
+        "purpose": "generic proof for documentation file"
+    },
+    "assets/": {
+        "command": "just fast",
+        "purpose": "generic proof for assets directory"
+    },
+    "codebook.toml": {
+        "command": "just fast",
+        "purpose": "generic proof for config file"
+    },
+    "command-plain.properties": {
+        "command": "just fast",
+        "purpose": "generic proof for properties file"
+    },
+    "command-scram-256.properties": {
+        "command": "just fast",
+        "purpose": "generic proof for properties file"
+    },
+    "command-scram-512.properties": {
+        "command": "just fast",
+        "purpose": "generic proof for properties file"
+    },
+    "command.properties": {
+        "command": "just fast",
+        "purpose": "generic proof for properties file"
+    },
+    "example.env": {
+        "command": "just fast",
+        "purpose": "generic proof for example env file"
+    },
+    "fuzz/": {
+        "command": "just fast",
+        "purpose": "generic proof for fuzz directory"
+    },
+    "jansu/": {
+        "command": "just fast",
+        "purpose": "generic proof for jansu source"
+    },
+    "jansu-auth/": {
+        "command": "just fast",
+        "purpose": "generic proof for auth component"
+    },
+    "jansu-broker/": {
+        "command": "just fast",
+        "purpose": "generic proof for broker component"
+    },
+    "jansu-cat/": {
+        "command": "just fast",
+        "purpose": "generic proof for cat component"
+    },
+    "jansu-cli/": {
+        "command": "just fast",
+        "purpose": "generic proof for CLI"
+    },
+    "jansu-client/": {
+        "command": "just fast",
+        "purpose": "generic proof for client library"
+    },
+    "jansu-generator/": {
+        "command": "just fast",
+        "purpose": "generic proof for generator"
+    },
+    "jansu-model/": {
+        "command": "just fast",
+        "purpose": "generic proof for model"
+    },
+    "jansu-otel/": {
+        "command": "just fast",
+        "purpose": "generic proof for otel integration"
+    },
+    "jansu-perf/": {
+        "command": "just fast",
+        "purpose": "generic proof for performance tools"
+    },
+    "jansu-proxy/": {
+        "command": "just fast",
+        "purpose": "generic proof for proxy"
+    },
+    "jansu-sans-io/": {
+        "command": "just fast",
+        "purpose": "generic proof for sans‑io library"
+    },
+    "jansu-schema/": {
+        "command": "just fast",
+        "purpose": "generic proof for schema library"
+    },
+    "jansu-service/": {
+        "command": "just fast",
+        "purpose": "generic proof for service"
+    },
+    "jansu-storage/": {
+        "command": "just fast",
+        "purpose": "generic proof for storage component"
+    },
+    "jansu-topic/": {
+        "command": "just fast",
+        "purpose": "generic proof for topic component"
+    },
+    "justfile": {
+        "command": "just fast",
+        "purpose": "generic proof for justfile"
+    },
+    "README-jankurai-scaffold.md": {
+        "command": "just fast",
+        "purpose": "generic proof for scaffold README"
+    },
+    "rust-toolchain.toml": {
+        "command": "just fast",
+        "purpose": "generic proof for rust toolchain config"
+    },
+    "rustfmt.toml": {
+        "command": "just fast",
+        "purpose": "generic proof for rustfmt config"
+    },
+    "schema-diff-0.5.0-0.6.0.txt": {
+        "command": "just fast",
+        "purpose": "generic proof for schema diff"
+    },
+    "scripts/": {
+        "command": "just fast",
+        "purpose": "generic proof for scripts directory"
+    },
+    "tips/": {
+        "command": "just fast",
+        "purpose": "generic proof for tips directory"
+    },
+    "logs/": {
+        "command": "just fast",
+        "purpose": "generic proof for logs directory"
+    },
+    "phase-logs/": {
+        "command": "just fast",
+        "purpose": "generic proof for phase logs"
+    },
+    "phase08-libsql-produce-leader-epoch.db": {
+        "command": "just fast",
+        "purpose": "generic proof for DB artifact"
+    },
+    "check_errors.log": {
+        "command": "just fast",
+        "purpose": "generic proof for error log"
+    },
+    ".gitleaks.toml": {
+        "command": "just fast",
+        "purpose": "generic proof for gitleaks config"
     }
   }
 }
