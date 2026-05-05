@@ -33,6 +33,7 @@
     ".github/workflows/differential-kafka-lab.yml": "ops",
     ".github/workflows/release.yml": "ops",
     "AGENT.md": "agent",
+    "agent/owner-map.json": "agent",
     "AUDIT.md": "agent",
     "CLAUDE.md": "agent",
     "Cargo.toml": "ops",
