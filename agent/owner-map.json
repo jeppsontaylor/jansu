@@ -78,6 +78,7 @@
 "logs/": "ops",
 "phase-logs/": "ops",
 "phase08-libsql-produce-leader-epoch.db": "ops",
-"check_errors.log": "ops"
+"check_errors.log": "ops",
+"*": "ops"
   }
 }
