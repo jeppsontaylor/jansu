@@ -1,8 +1,16 @@
 title = "gitleaks config"
 
-
 [[rules]]
-  description = "Ignore default postgres password"
-  regex = "POSTGRES_PASSWORD=postgres"
+  description = "Ignore default PostgreSQL URL with placeholder credentials"
+  regex = "postgresql://[^:]+:postgres@"
   tags = ["allowlist"]
 
+[[rules]]
+  description = "Ignore default minio credentials"
+  regex = "minioadmin"
+  tags = ["allowlist"]
+
+[[rules]]
+  description = "Ignore placeholder encryption key"
+  regex = "This-is-NOT-Secure!"
+  tags = ["allowlist"]
