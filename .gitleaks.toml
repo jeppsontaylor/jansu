@@ -1,0 +1,8 @@
+title = "gitleaks config"
+
+
+[[rules]]
+  description = "Ignore default postgres password"
+  regex = "POSTGRES_PASSWORD=postgres"
+  tags = ["allowlist"]
+

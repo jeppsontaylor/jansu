@@ -1,0 +1,34 @@
+name: jankurai
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install jankurai
+        run: cargo install jankurai --locked
+      - run: jankurai --version
+      - name: jankurai audit
+        run: jankurai audit . --mode advisory --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md --sarif target/jankurai/jankurai.sarif --github-step-summary target/jankurai/summary.md --repair-queue-jsonl target/jankurai/repair-queue.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jankurai-adoption-evidence
+          if-no-files-found: ignore
+          path: |
+            target/jankurai/repo-score.json
+            target/jankurai/repo-score.md
+            target/jankurai/jankurai.sarif
+            target/jankurai/repair-queue.jsonl
+            target/jankurai/security/evidence.json
+            target/jankurai/ux-qa.json
+            target/jankurai/migration-report.json
+            target/jankurai/rust/witness-graph.json

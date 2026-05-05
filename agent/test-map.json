@@ -1,0 +1,185 @@
+{
+  "workspace": "jankurai",
+  "tests": {
+    "AGENTS.md": {
+      "command": "just score",
+      "purpose": "verify root routing remains visible to the audit"
+    },
+    "agent/": {
+      "command": "just score",
+      "purpose": "verify manifests remain parseable and authoritative"
+    },
+    "contracts/": {
+      "command": "jankurai audit . --mode advisory --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md",
+      "purpose": "advisory contract drift scan until project-specific contract checks exist"
+    },
+    "db/migrations/": {
+      "command": "jankurai doctor --fail-on critical",
+      "purpose": "advisory control-plane health check until migration tests exist"
+    },
+    "db/": {
+      "command": "jankurai doctor --fail-on critical",
+      "purpose": "advisory database boundary health check"
+    },
+    "db/constraints/": {
+      "command": "jankurai doctor --fail-on critical",
+      "purpose": "advisory constraint-lane health check until DB proof exists"
+    },
+    "docs/architecture/": {
+      "command": "jankurai audit . --mode advisory --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md",
+      "purpose": "verify architecture docs remain visible to the audit"
+    },
+    "docs/decisions/": {
+      "command": "jankurai audit . --mode advisory --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md",
+      "purpose": "verify decision records remain visible to the audit"
+    },
+    "README-jankurai-scaffold.md": {
+      "command": "jankurai doctor --fail-on critical",
+      "purpose": "verify scaffold marker does not hide missing control-plane files"
+    },
+    "tools/": {
+      "command": "just fast",
+      "purpose": "verify Rust behavior and audit checks"
+    },
+    "crates/": {
+      "command": "just fast",
+      "purpose": "verify Rust behavior and audit checks"
+    },
+    "docs/": {
+      "command": "just score",
+      "purpose": "verify agent-readable documentation remains routed"
+    },
+    ".agents/": {
+      "command": "just score",
+      "purpose": "verify .agents path routing"
+    },
+    ".agents/agents.md": {
+      "command": "just score",
+      "purpose": "verify agents file routing"
+    },
+    ".agents/skills/jankurai/SKILL.md": {
+      "command": "just score",
+      "purpose": "verify jankurai skill file routing"
+    },
+    ".agents/workflows/jankurai-audit.md": {
+      "command": "just score",
+      "purpose": "verify jankurai audit workflow routing"
+    },
+    ".claude/": {
+      "command": "just score",
+      "purpose": "verify .claude path routing"
+    },
+    ".claude/skills/jankurai/SKILL.md": {
+      "command": "just score",
+      "purpose": "verify claude jankurai skill routing"
+    },
+    ".cursor/": {
+      "command": "just score",
+      "purpose": "verify .cursor path routing"
+    },
+    ".cursor/rules/jankurai.mdc": {
+      "command": "just score",
+      "purpose": "verify cursor rules file routing"
+    },
+    ".cursor/rules/jansu-master-plan.mdc": {
+      "command": "just score",
+      "purpose": "verify cursor master plan routing"
+    },
+    ".devcontainer/": {
+      "command": "just fast",
+      "purpose": "verify devcontainer files"
+    },
+    ".devcontainer/Dockerfile": {
+      "command": "just fast",
+      "purpose": "verify devcontainer Dockerfile"
+    },
+    ".devcontainer/devcontainer.json": {
+      "command": "just fast",
+      "purpose": "verify devcontainer JSON"
+    },
+    ".dockerignore": {
+      "command": "just fast",
+      "purpose": "verify dockerignore file"
+    },
+    ".github/workflows/ci.yml": {
+      "command": "just fast",
+      "purpose": "verify CI workflow file"
+    },
+    ".github/workflows/jankurai.yml": {
+      "command": "just fast",
+      "purpose": "verify Jankurai workflow file"
+    },
+    ".agent/rules/jansu-master-plan.md": {
+      "command": "just fast",
+      "purpose": "verify master plan rule file"
+    },
+    "examples/perfect-web-api-db/backend/src/background_job.rs": {
+      "command": "just fast",
+      "purpose": "run proofs for background‑job cell"
+    },
+    ".gitattributes": {
+      "command": "just fast",
+      "purpose": "verify gitattributes file"
+    },
+    ".github/copilot-instructions.md": {
+      "command": "just fast",
+      "purpose": "verify copilot instructions"
+    },
+    ".github/dependabot.yml": {
+      "command": "just fast",
+      "purpose": "verify dependabot config"
+    },
+    ".github/instructions/jankurai-rust.instructions.md": {
+      "command": "just fast",
+      "purpose": "verify rust instructions"
+    },
+    ".github/instructions/jankurai-web.instructions.md": {
+      "command": "just fast",
+      "purpose": "verify web instructions"
+    },
+    ".github/instructions/jankurai.instructions.md": {
+      "command": "just fast",
+      "purpose": "verify generic instructions"
+    },
+    ".github/workflows/differential-kafka-lab.yml": {
+      "command": "just fast",
+      "purpose": "verify differential kafka lab workflow"
+    },
+    ".github/workflows/release.yml": {
+      "command": "just fast",
+      "purpose": "verify release workflow"
+    },
+    "AGENT.md": {
+      "command": "just fast",
+      "purpose": "verify AGENT documentation"
+    },
+    "AUDIT.md": {
+      "command": "just score",
+      "purpose": "verify audit file routing"
+    },
+    "CLAUDE.md": {
+      "command": "just fast",
+      "purpose": "verify CLAUDE documentation"
+    },
+    "Cargo.toml": {
+      "command": "just fast",
+      "purpose": "verify Cargo manifest"
+    },
+    "Dockerfile": {
+      "command": "just fast",
+      "purpose": "verify Dockerfile"
+    },
+    "GEMINI.md": {
+      "command": "just fast",
+      "purpose": "verify GEMINI documentation"
+    },
+    "LICENSE": {
+      "command": "just fast",
+      "purpose": "verify LICENSE file"
+    },
+    "MASTER_PLAN.md": {
+      "command": "just score",
+      "purpose": "verify master plan routing"
+    }
+  }
+}

@@ -64,3 +64,5 @@ Every attempt log must include:
 - `Outcome`
 - `Residual Risks`
 - `Next Recommended Action`
+
+<!-- jankurai merge marker: review and merge canonical guidance for AGENTS.md -->

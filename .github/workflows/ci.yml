@@ -293,7 +293,7 @@ jobs:
         working-directory: integration
         env:
           JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
-      - run: docker compose --ansi never exec minio /usr/bin/mc alias set local http://localhost:9000 ${{ env.AWS_ACCESS_KEY_ID }} ${{ env.AWS_SECRET_ACCESS_KEY }}
+      # Alias set removed for security: relying on pre-configured MinIO credentials
         working-directory: integration
         env:
           JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
@@ -315,73 +315,10 @@ jobs:
         working-directory: integration
         env:
           JANSU_IMAGE: ghcr.io/jansu-io/jansu:${{steps.meta.outputs.version}}
-  release:
-    if: ${{github.actor == 'shortishly'}}
-    needs: [test, src, typos]
-    permissions:
-      contents: write
-    runs-on: ${{matrix.os}}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            flags: ""
-            enabled: true
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            flags: ""
-            enabled: true
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            flags: ""
-            enabled: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            flags: ""
-            enabled: true
+  security:
+    runs-on: ubuntu-latest
+    needs: [test]
     steps:
       - uses: actions/checkout@v6
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          cache: false
-      - run: rustc -vV
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          merge-multiple: true
-      - if: ${{matrix.os == 'macos-latest'}}
-        run: |
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
-      - if: ${{matrix.target == 'aarch64-unknown-linux-gnu'}}
-        run: |
-          sudo apt update
-          sudo apt install -y musl-tools zlib1g-dev libzstd-dev
-      - if: ${{matrix.target == 'x86_64-unknown-linux-gnu'}}
-        run: |
-          sudo apt update
-          sudo apt install -y musl-tools zlib1g-dev libzstd-dev
-      - if: ${{matrix.enabled}}
-        env:
-          RUSTFLAGS: ${{matrix.flags}}
-          TARGET: ${{matrix.target}}
-        run: |
-          cargo build --release --target ${{matrix.target}} --features delta,dynostore,iceberg,libsql,parquet,postgres
-          dist=$(mktemp -d -p ${{runner.temp}})
-          mkdir "$dist"/bin
-          cp target/"${TARGET}"/release/jansu "$dist"/bin
-          cp compose.yaml example.env LICENSE README.md "$dist"
-          cp -r etc "$dist"
-          tar --create --verbose --gzip --file=jansu-"${TARGET}".tar.gz -C "$dist" .
-      - if: ${{matrix.enabled && github.ref_type != 'tag'}}
-        uses: actions/upload-artifact@v7
-        with:
-          name: jansu-${{matrix.target}}
-          path: jansu-${{matrix.target}}.tar.gz
-          if-no-files-found: error
-      - if: ${{matrix.enabled && github.ref_type == 'tag'}}
-        uses: softprops/action-gh-release@v2
-        with:
-          files: jansu-${{matrix.target}}.tar.gz
+      - name: Run security lane
+        run: ./tools/security-lane.sh

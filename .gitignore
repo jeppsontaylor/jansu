@@ -25,3 +25,7 @@ profile.json*
 target
 !phase-logs/
 !phase-logs/*.md.log
+# jankurai scaffold .gitignore
+# Keep Jankurai receipts local without hiding the rest of target/.
+target/jankurai/
+.jankurai/
