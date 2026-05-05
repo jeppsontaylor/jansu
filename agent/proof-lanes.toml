@@ -17,3 +17,13 @@ purpose = "secret, dependency, and workflow proof"
 name = "release"
 command = "just check"
 purpose = "full merge gate"
+
+[[lane]]
+name = "contracts-audit"
+command = "jankurai audit . --mode advisory --json target/jankurai/repo-score.json --md target/jankurai/repo-score.md"
+purpose = "audit contracts and docs using audit command"
+
+[[lane]]
+name = "db-doctor"
+command = "jankurai doctor --fail-on critical"
+purpose = "run doctor checks for DB docs"
