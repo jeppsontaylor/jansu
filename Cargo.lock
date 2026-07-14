@@ -2901,15 +2901,15 @@ dependencies = [
 
 [[package]]
 name = "delta_kernel"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1090d16e17a06e95ed6f85980d5ac9640e855b5f30f20137b0564206e4cc656e"
+checksum = "f35ed3e674a2e60ad8da26f254dd60ce6d2ad90e76c57d876ae481e02b02d752"
 dependencies = [
  "arrow",
  "bytes",
  "chrono",
  "crc",
- "delta_kernel_derive 0.20.0",
+ "delta_kernel_derive 0.21.0",
  "indexmap 2.14.0",
  "itertools 0.14.0",
  "object_store 0.12.5",
@@ -2939,9 +2939,9 @@ dependencies = [
 
 [[package]]
 name = "delta_kernel_derive"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d0157a88736949355db0680cbaa34a236b1fad780c203038d5e74ea03113043"
+checksum = "4f4472e97910e8c1362dbe7cf0715a8cf7c821b42604d7b71f6f7c7df80e6f35"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5018,7 +5018,7 @@ dependencies = [
  "bytes",
  "chrono",
  "datafusion",
- "delta_kernel 0.20.0",
+ "delta_kernel 0.21.0",
  "deltalake",
  "dotenv",
  "fake",
